@@ -1,10 +1,10 @@
 # SVSD onboarding
 
-A small native SwiftUI implementation of the Figma onboarding frame, plus a browser page for comparing four logo micro-interactions.
+An eight-screen SwiftUI onboarding flow with a Metal metaball backdrop, plus a browser motion study.
 
 ## Open the iOS app
 
-Open `SVSD.xcodeproj` in Xcode and run the `SVSD` target on an iPhone simulator. The project uses SwiftUI and has no third-party dependencies.
+Open `SVSD.xcodeproj` in Xcode and run the `SVSD` target on an iPhone simulator. In Debug builds, tap **Replay** after the intro to play it again. The project uses SwiftUI and has no third-party dependencies.
 
 ## Preview the motion studies
 
@@ -18,4 +18,4 @@ Then visit `http://localhost:8000`. The opening study plays once on load: the ov
 
 ## Source
 
-The welcome screen is based on Figma node `72:1056` in the linked `SVSD-design-comp` file (iPhone 16, 393 × 852). On launch, an inverse-color `kith` placeholder holds over the oversized SVSD mark; the mark contracts into the logo before the tagline and controls fade in. Dark appearance inverts the colors. Reduced Motion skips the intro and shows the final screen immediately. The CTA destination remains unspecified by the supplied frame.
+The onboarding flow implements the linked Figma screens. Phone verification, permission steps, contacts, and location updates are simulated; the app does not read contacts, track location, or access photos. In planning, tap **Demo** to run a scripted route and schedule local push-style notifications. These are demo simulations, not remote push or live background tracking.

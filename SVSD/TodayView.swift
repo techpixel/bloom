@@ -1,0 +1,751 @@
+import SwiftUI
+
+// MARK: - Models
+
+/// A nudge on the Today carousel: someone you crossed paths with, when you are
+/// both free, and one idea for what to do about it.
+struct TodayNudge: Identifiable {
+    let contact: KithContact
+    /// When and where you last saw them, as one sentence.
+    var seen: String
+    /// When you're both free, for each range they're free in. The range tabs
+    /// only show the friends who have an opening in that range.
+    var free: [ScheduleRange: String]
+    var idea: String
+
+    var id: String { contact.id }
+}
+
+/// A hangout Bloom has already logged for you, and what you made of it. Home
+/// asks how it felt; the detail page holds the photos and the place.
+struct RecentHangout: Identifiable {
+    let contact: KithContact
+    var title: String
+    var detail: String
+    /// The detail page's title reads "9am with Manitej".
+    var startTime: String
+    var place: String
+    /// Coming back often enough is what makes Bloom offer to name the place.
+    var visitsThisMonth = 0
+    var placeName: String?
+    var placeTags: [String] = []
+    var namingDismissed = false
+    var photos: [MeetupPhoto] = []
+    var feelings: Set<Feeling> = []
+    var reflection = ""
+    /// Which recap periods pick it out as a highlight.
+    var highlightIn: Set<RecapPeriod> = []
+
+    let id = UUID()
+}
+
+// MARK: - Screen
+
+/// Home: the greeting, the day range, a carousel of nudges, and what you
+/// have been up to lately.
+struct TodayView: View {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.colorScheme) private var colorScheme
+    @State private var range = ScheduleRange.today
+    /// The carousel slot in the middle. Slots repeat the nudges so the carousel
+    /// loops; `slot % count` is the nudge.
+    @State private var focusedSlot: Int?
+    @State private var composing: MessageDraft?
+    @State private var planning: KithContact?
+    @Environment(HangoutStore.self) private var store
+    /// The hangout open in detail.
+    @State private var openHangout: RecentHangout.ID?
+    /// What you've picked and written on the card, until you save it into the entry.
+    @State private var draftFeelings: Set<Feeling> = []
+    @State private var draftReflection = ""
+    @State private var savedReflection = 0
+    /// The wait between your last tap on a feeling and the card filing it.
+    @State private var settling: Task<Void, Never>?
+    @Namespace private var recentCards
+    @AppStorage("profile.name") private var name = "Amber"
+    /// Taking a break (Profile) pauses suggestions along with everything shared.
+    @AppStorage("settings.onBreak") private var onBreak = false
+    /// The entrance plays the first time Home opens each launch, not on every
+    /// return to the tab.
+    @State private var entered = TodayView.hasEntered
+    private static var hasEntered = false
+
+    /// Newest first; the first is the one Home asks you to reflect on.
+    private var recents: [RecentHangout] { store.hangouts }
+
+    private var isDark: Bool { colorScheme == .dark }
+    private var ink: Color { KithTheme.ink(isDark) }
+    private var secondary: Color { KithTheme.secondary(isDark) }
+    private var card: Color { KithTheme.uiFill(isDark) }
+
+    // The comp is an iPhone 16 frame: 393 x 852.
+    private let designWidth: CGFloat = 393
+    private let cardWidth: CGFloat = 291
+    /// A recent card, plus a sliver of the next one so the strip reads as scrollable.
+    private let recentCardWidth: CGFloat = 325
+    /// Copies of the nudges laid end to end. Odd, so the first nudge can start
+    /// in the true middle with as many laps available either way.
+    private static let laps = 101
+
+    private var nudges: [TodayNudge] { TodayNudge.sample.filter { $0.free[range] != nil } }
+
+    /// How many friends are free in each range, for the tabs' badges.
+    private var nudgeCounts: [ScheduleRange: Int] {
+        Dictionary(uniqueKeysWithValues: ScheduleRange.allCases.map { option in
+            (option, TodayNudge.sample.filter { $0.free[option] != nil }.count)
+        })
+    }
+
+    private var slots: [Int] {
+        nudges.count > 1 ? Array(0..<(nudges.count * Self.laps)) : Array(nudges.indices)
+    }
+
+    private var middleSlot: Int {
+        nudges.count > 1 ? nudges.count * (Self.laps / 2) : 0
+    }
+
+    private var focusedNudge: TodayNudge? {
+        guard !nudges.isEmpty else { return nil }
+        return nudges[(focusedSlot ?? middleSlot) % nudges.count]
+    }
+
+    var body: some View {
+        ZStack(alignment: .top) {
+            KithTheme.canvas(isDark)
+
+            backdrop
+                .opacity(entered ? 1 : 0)
+                .animation(.easeOut(duration: 1), value: entered)
+
+            VStack(alignment: .leading, spacing: 0) {
+                // Pinned: the greeting stays where the comp puts it, and
+                // everything under it scrolls.
+                greeting
+
+                ScrollView(.vertical, showsIndicators: false) {
+                    VStack(alignment: .leading, spacing: 0) {
+                        recentSection
+                            .padding(.top, 20)
+                            .padding(.horizontal, 20)
+
+                        Text("See A Friend")
+                            .font(.kithBodyStrong)
+                            .foregroundStyle(ink)
+                            .accessibilityAddTraits(.isHeader)
+                            .padding(.top, 26)
+                            .padding(.horizontal, 20)
+                            .entrance(4, visible: entered)
+
+                        if onBreak {
+                            breakNote
+                                .padding(.top, 12)
+                                .padding(.horizontal, 20)
+                                .entrance(5, visible: entered)
+                        } else {
+                            RangeTabs(selection: $range, counts: nudgeCounts)
+                                .padding(.top, 12)
+                                .padding(.horizontal, 16)
+                                .entrance(5, visible: entered)
+
+                            // A new range is a new set of friends: the old cards blur
+                            // out as the new ones blur in, in the same place.
+                            VStack(spacing: 4) {
+                                ZStack {
+                                    carousel
+                                        .id(range)
+                                        .transition(.blurReplace)
+                                }
+
+                                if !nudges.isEmpty {
+                                    sendButton
+                                        .frame(width: cardWidth - 32)
+                                        .entrance(7, visible: entered)
+                                }
+                            }
+                            .padding(.top, 12)
+                        }
+                    }
+                    .padding(.bottom, 28)
+                }
+                .scrollBounceBehavior(.basedOnSize)
+                .scrollDismissesKeyboard(.interactively)
+                // A soft edge where the content slides under the greeting.
+                .mask {
+                    VStack(spacing: 0) {
+                        LinearGradient(colors: [.clear, .black], startPoint: .top, endPoint: .bottom)
+                            .frame(height: 14)
+                        Rectangle()
+                    }
+                }
+            }
+        }
+        .background(KithTheme.canvas(isDark))
+        .task { await playEntrance() }
+        .messageSheet($composing)
+        .fullScreenCover(item: $planning) { _ in
+            PlanFlowView(onBack: { planning = nil })
+        }
+        .sensoryFeedback(.success, trigger: savedReflection)
+        // Back from the entry: the card picks up whatever was changed there.
+        .onChange(of: openHangout) { _, open in
+            if open == nil { loadDraft() }
+        }
+        .onAppear(perform: loadDraft)
+        .fullScreenCover(isPresented: Binding(get: { openHangout != nil }, set: { if !$0 { openHangout = nil } })) {
+            if let index = recents.firstIndex(where: { $0.id == openHangout }) {
+                MeetupDetailView(hangout: Bindable(store).hangouts[index]) { openHangout = nil }
+            }
+        }
+    }
+
+    /// The pastel blooms, made of the blobs of the friends you're looking at:
+    /// two overlap top right and two bottom left, the way the comp's backdrop
+    /// placed its blooms, each drifting on its own so the colours mix and shift.
+    private var backdrop: some View {
+        GeometryReader { geometry in
+            let size = geometry.size
+            let anchors = [
+                CGPoint(x: size.width * 0.98, y: size.height * 0.05),
+                CGPoint(x: size.width * 0.80, y: size.height * 0.13),
+                CGPoint(x: size.width * 0.34, y: size.height * 0.80),
+                CGPoint(x: size.width * 0.66, y: size.height * 0.88)
+            ]
+            let friends = Array(nudges.map(\.contact).prefix(anchors.count))
+
+            ZStack {
+                ForEach(Array(friends.enumerated()), id: \.element.id) { index, friend in
+                    DriftingBlob(blob: friend.blob, length: size.width * 0.66, seed: Double(index) * 1.9, wander: 0.08)
+                        .position(anchors[index])
+                        .transition(.opacity)
+                }
+            }
+            .blur(radius: 26)
+            .opacity(isDark ? 0.4 : 0.5)
+            .animation(reduceMotion ? nil : .easeInOut(duration: 0.8), value: friends.map(\.id))
+        }
+        .ignoresSafeArea()
+        .accessibilityHidden(true)
+        .allowsHitTesting(false)
+    }
+
+    private var greeting: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text("\(partOfDay), \(name)")
+                .font(.kithTitle)
+                .foregroundStyle(ink)
+                .entrance(0, visible: entered)
+
+            Text("Take a little time to tend to your relationships.")
+                .font(.kithCaption)
+                .foregroundStyle(secondary)
+                .entrance(1, visible: entered)
+        }
+        .padding(.top, 30)
+        .padding(.horizontal, 20)
+        .accessibilityElement(children: .combine)
+    }
+
+    /// A beat after the screen first draws, so there's something to animate from.
+    private func playEntrance() async {
+        guard !entered else { return }
+        try? await Task.sleep(for: .milliseconds(60))
+        entered = true
+        Self.hasEntered = true
+    }
+
+    private var partOfDay: String {
+        switch Calendar.current.component(.hour, from: Date()) {
+        case 0..<12: return "Morning"
+        case 12..<17: return "Afternoon"
+        default: return "Evening"
+        }
+    }
+
+    /// While you're on a break there's no one to suggest: friends can't see
+    /// you, and Bloom isn't looking.
+    private var breakNote: some View {
+        VStack(spacing: 8) {
+            Text("You're taking a break")
+                .font(.kithCardTitle)
+                .foregroundStyle(ink)
+            Text("Friends can't see you or when you're free, so Bloom won't suggest anyone. Turn it off in Profile whenever you're ready.")
+                .font(.kithCaption)
+                .foregroundStyle(secondary)
+                .multilineTextAlignment(.center)
+                .lineSpacing(2)
+        }
+        .padding(.horizontal, 20)
+        .padding(.vertical, 28)
+        .frame(maxWidth: .infinity)
+        .background(card, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .accessibilityElement(children: .combine)
+    }
+
+    // MARK: - Carousel
+
+    /// Cards sit in a paging scroller so the neighbours peek in at the edges,
+    /// the way the comp draws them. The nudges repeat end to end, so swiping
+    /// past the last one comes back round to the first.
+    @ViewBuilder
+    private var carousel: some View {
+        if nudges.isEmpty {
+            Text("No one's free \(range == .thisWeek ? "this week" : range.title.lowercased()) yet.")
+                .font(.kithSecondary)
+                .foregroundStyle(secondary)
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 60)
+        } else {
+            // The send button's 44pt target already pads 4pt above the pill, so
+            // the visible gap under the cards is 4 + 4.
+            ScrollView(.horizontal, showsIndicators: false) {
+                    LazyHStack(spacing: 12) {
+                        ForEach(slots, id: \.self) { slot in
+                            nudgeCard(nudges[slot % nudges.count])
+                                .frame(width: cardWidth)
+                        }
+                    }
+                    .scrollTargetLayout()
+                }
+                .scrollTargetBehavior(.viewAligned)
+                .scrollPosition(id: $focusedSlot, anchor: .center)
+                .contentMargins(.horizontal, 51, for: .scrollContent)
+                // A tick as each card settles, not when the carousel first parks.
+                .sensoryFeedback(.selection, trigger: focusedSlot) { old, new in old != nil && new != nil }
+                .entrance(6, visible: entered)
+            .onAppear {
+                // A beat later, once the strip has laid out, or the jump is lost.
+                let start = middleSlot
+                DispatchQueue.main.async { focusedSlot = start }
+            }
+        }
+    }
+
+    /// One friend to see (comp 406:1695): the idea up top, their face in a
+    /// glow of their colour, when you last saw them and when you're both free.
+    private func nudgeCard(_ nudge: TodayNudge) -> some View {
+        VStack(spacing: 16) {
+            // Bloom offers the idea; it never picks for you.
+            Text(nudge.idea.prefix(1).uppercased() + nudge.idea.dropFirst())
+                .font(.kithCardTitle)
+                .foregroundStyle(ink)
+                .multilineTextAlignment(.center)
+
+            haloAvatar(nudge.contact)
+
+            VStack(spacing: 8) {
+                Text(nudge.contact.name)
+                    .font(.kithCardTitle)
+                    .foregroundStyle(ink)
+                Text(nudge.seen)
+                    .font(.kithCaption)
+                    .foregroundStyle(secondary)
+                    .multilineTextAlignment(.center)
+                    .lineLimit(2, reservesSpace: true)
+            }
+            .frame(maxWidth: .infinity)
+
+            Text(nudge.free[range] ?? "")
+                .font(.kithCaptionStrong)
+                .foregroundStyle(KithTheme.suggestionAccent)
+                .multilineTextAlignment(.center)
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 20)
+        .frame(maxWidth: .infinity)
+        .background(card, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .accessibilityElement(children: .combine)
+    }
+
+    /// The friend's colour as a soft, blurred glow behind their face, the
+    /// comp's halo, reaching past the photo mostly down and to the left.
+    private func haloAvatar(_ contact: KithContact) -> some View {
+        ContactAvatar(contact: contact, diameter: 96.664, badgeRing: card)
+            .background {
+                DriftingBlob(blob: contact.blob, length: 150, seed: Double(contact.name.count), wander: 0.025)
+                    .blur(radius: 5)
+                    .offset(x: -3, y: 4)
+            }
+            .padding(.vertical, 2)
+    }
+
+    private var sendButton: some View {
+        Button {
+            if let nudge = focusedNudge {
+                composing = MessageDraft(contact: nudge.contact)
+            }
+        } label: {
+            Text("Send a text")
+                .font(.kithCaption)
+                .kithCapCentered(13, relativeTo: .footnote)
+                .foregroundStyle(KithTheme.canvas(isDark))
+                .frame(maxWidth: .infinity)
+                .frame(height: 36)
+                .background(ink, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
+                .frame(minHeight: 44)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(PressableButtonStyle())
+        .accessibilityLabel(focusedNudge.map { "Send \($0.contact.firstName) a text" } ?? "Send a text")
+    }
+
+    // MARK: - Recent
+
+    /// The latest hangout asks how it went (comp 345:1849). Pick a feeling or
+    /// two and, after a beat, the card shrinks into a row like the ones under
+    /// it (comp 407:1532); "Something else" asks for a few words first. Under
+    /// it, the last few friends you've already answered for.
+    @ViewBuilder
+    private var recentSection: some View {
+        if !recents.isEmpty {
+            VStack(alignment: .leading, spacing: 10) {
+                Text("Recent")
+                    .font(.kithBodyStrong)
+                    .foregroundStyle(ink)
+                    .accessibilityAddTraits(.isHeader)
+                    .entrance(2, visible: entered)
+
+                VStack(spacing: 10) {
+                    if let asking = recents.first, asking.feelings.isEmpty {
+                        reflectionCard(asking)
+                            .matchedGeometryEffect(id: asking.id, in: recentCards)
+                            .transition(.opacity)
+                    }
+
+                    if !answeredRecents.isEmpty {
+                        ScrollView(.horizontal, showsIndicators: false) {
+                            LazyHStack(spacing: 10) {
+                                ForEach(answeredRecents) { hangout in
+                                    HangoutRow(hangout: hangout) { openHangout = hangout.id }
+                                        .frame(width: recentCardWidth)
+                                        .matchedGeometryEffect(id: hangout.id, in: recentCards)
+                                        .transition(.opacity)
+                                }
+                            }
+                            .scrollTargetLayout()
+                        }
+                        .scrollTargetBehavior(.viewAligned)
+                        .scrollClipDisabled()
+                    }
+                }
+                .entrance(3, visible: entered)
+            }
+        }
+    }
+
+    /// The newest hangout with each friend, the ones still wanting a reflection
+    /// first so they're what you land on.
+    private var answeredRecents: [RecentHangout] {
+        var seen: Set<String> = []
+        let newestPerFriend = recents.filter { hangout in
+            guard !seen.contains(hangout.contact.name) else { return false }
+            seen.insert(hangout.contact.name)
+            return true
+        }
+        // The one the card above is already asking about isn't repeated here.
+        let asking = recents.first.flatMap { $0.feelings.isEmpty ? $0.id : nil }
+        return newestPerFriend
+            .filter { $0.id != asking }
+            .sorted { $0.feelings.isEmpty && !$1.feelings.isEmpty }
+    }
+
+    private func reflectionCard(_ hangout: RecentHangout) -> some View {
+        let friend = hangout.contact
+        let wantsWords = draftFeelings.contains(.somethingElse)
+
+        return VStack(alignment: .leading, spacing: 12) {
+            HStack(spacing: 10) {
+                ContactAvatar(contact: friend, diameter: 60, badgeRing: card)
+
+                VStack(alignment: .leading, spacing: 5) {
+                    Text(hangout.title)
+                        .font(.kithCardTitle)
+                        .foregroundStyle(ink)
+                    Text(hangout.detail)
+                        .font(.kithCaption)
+                        .foregroundStyle(KithTheme.recentMeta)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            .accessibilityElement(children: .combine)
+            .contextMenu {
+                Button("Text \(friend.firstName)", systemImage: "message") {
+                    composing = MessageDraft(contact: friend)
+                }
+                Button("Plan another", systemImage: "calendar") {
+                    planning = friend
+                }
+            }
+
+            VStack(alignment: .leading, spacing: 15) {
+                VStack(alignment: .leading, spacing: 10) {
+                    Text("How did your time with \(friend.firstName) feel?")
+                        .font(.kithCardTitle)
+                        .foregroundStyle(ink)
+                    FeelingChips(selected: $draftFeelings)
+                }
+
+                if wantsWords {
+                    VStack(alignment: .leading, spacing: 10) {
+                        Text("What was it like?")
+                            .font(.kithCardTitle)
+                            .foregroundStyle(ink)
+                        ReflectionField(text: $draftReflection, minHeight: 72, fill: KithTheme.canvas(isDark))
+                    }
+                    .transition(reveal(order: 1))
+
+                    saveButton
+                        .frame(maxWidth: .infinity, alignment: .trailing)
+                        .transition(reveal(order: 2))
+                }
+            }
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(card, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .animation(reduceMotion ? .easeOut(duration: 0.2) : .spring(response: 0.45, dampingFraction: 0.9), value: wantsWords)
+        .onChange(of: draftFeelings) { _, picked in settle(after: picked) }
+    }
+
+    /// Fades and rises in a beat after the one before; leaves with a plain fade.
+    private func reveal(order: Int) -> AnyTransition {
+        guard !reduceMotion else { return .opacity }
+        return .asymmetric(
+            insertion: .opacity.combined(with: .offset(y: 10))
+                .animation(.easeOut(duration: 0.45).delay(0.12 + Double(order) * 0.08)),
+            removal: .opacity.animation(.easeOut(duration: 0.15))
+        )
+    }
+
+    /// Two feelings is an answer; one waits a little longer in case a second
+    /// is coming. "Something else" waits for words and the Save button.
+    private func settle(after picked: Set<Feeling>) {
+        settling?.cancel()
+        guard !picked.isEmpty, !picked.contains(.somethingElse) else { return }
+        let wait: Duration = picked.count >= 2 ? .milliseconds(700) : .milliseconds(1600)
+        settling = Task { @MainActor in
+            try? await Task.sleep(for: wait)
+            guard !Task.isCancelled else { return }
+            answer()
+        }
+    }
+
+    private var saveButton: some View {
+        let hasWords = !draftReflection.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+
+        return Button(action: answer) {
+            Text("Save")
+                .font(.kithCaption)
+                .kithCapCentered(13, relativeTo: .footnote)
+                .foregroundStyle(hasWords ? KithTheme.canvas(isDark) : KithTheme.secondaryOnFill(isDark))
+                .padding(.horizontal, 22)
+                .frame(height: 36)
+                .background(hasWords ? ink : KithTheme.canvas(isDark), in: RoundedRectangle(cornerRadius: 20, style: .continuous))
+                .frame(minHeight: 44)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(PressableButtonStyle())
+        .disabled(!hasWords)
+        .animation(reduceMotion ? nil : .easeOut(duration: 0.2), value: hasWords)
+        .accessibilityHint(hasWords ? "Saves it into the entry" : "Write a few words first")
+    }
+
+    /// Files the answer into the entry; the card shrinks into its row.
+    private func answer() {
+        guard !store.hangouts.isEmpty, !draftFeelings.isEmpty else { return }
+        UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
+        let words = draftReflection.trimmingCharacters(in: .whitespacesAndNewlines)
+        savedReflection += 1
+        withAnimation(reduceMotion ? .easeOut(duration: 0.2) : .spring(response: 0.55, dampingFraction: 0.86)) {
+            store.hangouts[0].feelings = draftFeelings
+            store.hangouts[0].reflection = words
+        }
+        draftFeelings = []
+        draftReflection = ""
+    }
+
+    private func loadDraft() {
+        guard let hangout = recents.first else { return }
+        draftFeelings = hangout.feelings
+        draftReflection = hangout.reflection
+    }
+}
+
+// MARK: - Sample data
+
+extension TodayNudge {
+    static let sample: [TodayNudge] = [
+        TodayNudge(
+            contact: KithContact(
+                name: "Jadden Picardal",
+                face: .photo(Portrait(asset: "AvatarJadden", width: 1.54, height: 1.54))
+            ),
+            seen: "You saw them at Vienna Cafe yesterday.",
+            free: [
+                .today: "You’re both free at 4:00pm.",
+                .thisWeek: "You’re both free Wednesday at 4:00pm."
+            ],
+            idea: "grab a coffee?"
+        ),
+        TodayNudge(
+            contact: KithContact(
+                name: "Manitej Boorgu",
+                face: .photo(Portrait(asset: "FriendAvatar", width: 2.5919, height: 1.7318, x: 0.1038, y: -0.0007))
+            ),
+            seen: "You saw them at Eleventh House on Monday.",
+            free: [
+                .today: "You’re both free at 7:30pm.",
+                .tomorrow: "You’re both free tomorrow at 6:00pm.",
+                .thisWeek: "You’re both free Friday evening."
+            ],
+            idea: "split a plate of fries?"
+        ),
+        TodayNudge(
+            contact: KithContact(
+                name: "Ishan Goyal",
+                face: .photo(Portrait(asset: "AvatarIshan", width: 1.0751, height: 1.2933, x: -0.0173, y: -0.09))
+            ),
+            seen: "You haven’t seen them in three weeks.",
+            free: [
+                .tomorrow: "You’re both free tomorrow at noon.",
+                .thisWeek: "You’re both free Thursday afternoon."
+            ],
+            idea: "go for a walk?"
+        ),
+        TodayNudge(
+            contact: KithContact(
+                name: "Ray Arayilikath",
+                face: .photo(Portrait(asset: "AvatarRay", width: 1.2465, height: 1.5581, y: 0.164))
+            ),
+            seen: "You saw them Sunday. They’re around campus today.",
+            free: [
+                .today: "You’re both free at 6:00pm.",
+                .thisWeek: "You’re both free Saturday morning."
+            ],
+            idea: "cook something?"
+        ),
+        TodayNudge(
+            contact: KithContact(
+                name: "Michelle Xuan",
+                face: .photo(Portrait(asset: "AvatarMichelle", height: 2))
+            ),
+            seen: "You saw them at Vienna Cafe two weeks ago.",
+            free: [
+                .tomorrow: "You’re both free tomorrow at 3:00pm.",
+                .thisWeek: "You’re both free Sunday at 2:00pm."
+            ],
+            idea: "study together?"
+        )
+    ]
+}
+
+extension RecentHangout {
+    /// The comps' hangouts first — the newest is Home's — then enough more that
+    /// each friend's recap count adds up to real entries.
+    static let sample: [RecentHangout] = {
+        let manitej = KithContact(
+            name: "Manitej Boorgu",
+            face: .photo(Portrait(asset: "FriendAvatar", width: 2.4184, height: 1.6158, x: 0.0634, y: -0.0342))
+        )
+        let ray = KithContact(
+            name: "Ray Arayilikath",
+            face: .photo(Portrait(asset: "AvatarRay", width: 1.2465, height: 1.5581, y: 0.164))
+        )
+        let ishan = KithContact(
+            name: "Ishan Goyal",
+            face: .photo(Portrait(asset: "AvatarIshan", width: 1.0751, height: 1.2933, x: -0.0173, y: -0.09))
+        )
+        let jadden = KithContact(name: "Jadden Picardal", face: .photo(Portrait(asset: "AvatarJadden", width: 1.54, height: 1.54)))
+        let michelle = KithContact(name: "Michelle Xuan", face: .photo(Portrait(asset: "RecapMichelle")))
+        let friend = { (key: String) in recapFriends[key]! }
+
+        // The comp's photos (69:869). A demo, so every hangout borrows from the
+        // same roll rather than opening on an empty grid.
+        var hangouts = [
+            RecentHangout(
+                contact: manitej,
+                title: "Coffee with Manitej",
+                detail: "Monday · 2 hours · Eleventh House",
+                startTime: "9am",
+                place: "Eleventh House, Lafayette",
+                visitsThisMonth: 3,
+                photos: Self.compPhotos,
+                highlightIn: [.month]
+            ),
+            RecentHangout(
+                contact: manitej,
+                title: "Studying with Manitej",
+                detail: "Monday · 2 hours · Eleventh House",
+                startTime: "1pm",
+                place: "Eleventh House, Lafayette",
+                photos: Self.compPhotos,
+                feelings: [.connected, .energized],
+                reflection: "we joked around a lot at the beginning and hes always a fun guy to hang out with!\n\ngot coffee and studied pretty hard, glad that i decided to meet up with him even thought i really didn’t want to go outside today",
+                highlightIn: [.week]
+            ),
+            RecentHangout(
+                contact: ray,
+                title: "Dinner with Ray",
+                detail: "Sunday · 1 hr 20 min · Home",
+                startTime: "7pm",
+                place: "Home",
+                photos: Self.photoRoll(3),
+                feelings: [.atEase],
+                highlightIn: [.week, .month]
+            )
+        ]
+
+        // Enough more that each bubble's week count is real entries: Manitej 5,
+        // Ishan 4, Michelle 4, Ray 3, Dev 3, Theo 2, Amara 1, Jadden 1.
+        let more: [(KithContact, Int)] = [
+            (manitej, 3), (ishan, 4), (michelle, 4), (ray, 2),
+            (friend("Dev"), 3), (friend("Theo"), 2), (friend("Amara"), 1), (jadden, 1)
+        ]
+        let plans = [
+            ("Lunch", "12pm", "1 hour", "Purdue Memorial Union"),
+            ("Walk", "5pm", "45 min", "Celery Bog"),
+            ("Study session", "3pm", "2 hours", "Hicks Library"),
+            ("Coffee", "10am", "1 hr 10 min", "Vienna Cafe"),
+            ("Dinner", "7pm", "1 hr 30 min", "Lafayette Brewing")
+        ]
+        let days = ["Saturday", "Friday", "Thursday", "Wednesday", "Tuesday"]
+        var step = 0
+        // A few of them already answered, so Home has more than one friend to show.
+        let answered: [String: Set<Feeling>] = ["Ishan": [.energized], "Michelle": [.connected, .atEase]]
+        for (contact, count) in more {
+            for round in 0..<count {
+                let plan = plans[step % plans.count]
+                hangouts.append(RecentHangout(
+                    contact: contact,
+                    title: "\(plan.0) with \(contact.firstName)",
+                    detail: "\(days[step % days.count]) · \(plan.2) · \(plan.3)",
+                    startTime: plan.1,
+                    place: "\(plan.3), Lafayette",
+                    photos: Self.photoRoll(step),
+                    feelings: round == 0 ? answered[contact.firstName] ?? [] : []
+                ))
+                step += 1
+            }
+        }
+        return hangouts
+    }()
+
+    /// All four of the comp's photos, for the entry it draws in full.
+    static let compPhotos: [MeetupPhoto] = [
+        .asset("MeetupPhotoPlant"),
+        .asset("MeetupPhotoDrink"),
+        .asset("MeetupPhotoCafe"),
+        .asset("MeetupPhotoLatte")
+    ]
+
+    /// Three of them, rotated, so no two neighbouring entries look identical.
+    static func photoRoll(_ seed: Int) -> [MeetupPhoto] {
+        (0..<3).map { compPhotos[(seed + $0) % compPhotos.count] }
+    }
+}
+
+#Preview {
+    TodayView()
+        .environment(HangoutStore())
+}

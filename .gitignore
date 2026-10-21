@@ -1,0 +1,10 @@
+# macOS
+.DS_Store
+
+# Xcode per-user state
+xcuserdata/
+*.xcuserstate
+DerivedData/
+
+# In-app feedback notes and their screenshots (debug builds write these)
+feedback/

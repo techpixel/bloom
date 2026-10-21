@@ -132,10 +132,10 @@ footer { display: flex; justify-content: space-between; gap: 16px; padding: 16px
 }
 
 @media (prefers-reduced-motion: no-preference) {
-  .home-logo { animation: logo-contract 1250ms cubic-bezier(.2, 0, 0, 1) 1.05s both; }
-  .wordmark { animation: wordmark-away 200ms ease-out 900ms both; }
-  .tagline { opacity: 0; animation: copy-in 340ms ease-out 2.3s both; }
-  .start-button, .page-control { opacity: 0; animation: controls-in 320ms ease-out 2.42s both; }
+  .home-logo { animation: logo-contract 550ms ease-in-out 1.3s both; }
+  .wordmark { animation: wordmark-away 200ms ease-out 1.1s both; }
+  .tagline { opacity: 0; animation: copy-in 1300ms ease-out 2.2s both; }
+  .start-button, .page-control { opacity: 0; animation: controls-in 1300ms ease-out 2.5s both; }
 }
 
 @keyframes logo-contract { from { transform: scale(70); } to { transform: scale(1); } }
