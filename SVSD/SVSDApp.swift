@@ -14,12 +14,33 @@ struct SVSDApp: App {
         WindowGroup {
             RootView()
                 .kithTypeScaling()
+                #if targetEnvironment(macCatalyst)
+                .onAppear(perform: MacWindow.fitToPhone)
+                #endif
                 #if DEBUG
                 .onAppear { FeedbackKit.install() }
                 #endif
         }
     }
 }
+
+#if targetEnvironment(macCatalyst)
+/// On a Mac, Bloom runs in a window the size of an iPhone 16, so every screen
+/// is laid out exactly as it is on the phone, with no title in the bar.
+enum MacWindow {
+    static let size = CGSize(width: 393, height: 852)
+
+    static func fitToPhone() {
+        for scene in UIApplication.shared.connectedScenes {
+            guard let windowScene = scene as? UIWindowScene else { continue }
+            windowScene.sizeRestrictions?.minimumSize = size
+            windowScene.sizeRestrictions?.maximumSize = size
+            windowScene.titlebar?.titleVisibility = .hidden
+            windowScene.titlebar?.toolbar = nil
+        }
+    }
+}
+#endif
 
 private final class DemoNotificationDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCenterDelegate {
     func application(
@@ -101,7 +122,66 @@ struct RootView: View {
             MainTabView(onLogOut: { onboarded = false })
         } else {
             OnboardingView(onComplete: { onboarded = true })
+                .overlay {
+                    if DemoCast.isJudge && !demoNoticeRead {
+                        DemoNotice { withAnimation(.easeInOut(duration: 0.35)) { demoNoticeRead = true } }
+                            .transition(.opacity)
+                    }
+                }
         }
+    }
+
+    /// The judge's build opens on a note about what's simulated, once.
+    @AppStorage("demo.noticeRead") private var demoNoticeRead = false
+}
+
+/// What's real and what isn't, before the judge's build starts: shown once,
+/// over the welcome screen.
+private struct DemoNotice: View {
+    var onStart: () -> Void
+
+    private let points: [(title: String, detail: String)] = [
+        ("Everything here is a demo.", "Bloom is a working prototype. Nothing you type or choose leaves this Mac."),
+        ("Your friends are made up.", "Nora and Leo, and your time with them, are sample data so there’s something to look at."),
+        ("Location, calendars and contacts are simulated.", "The permission prompts are stand-ins: allowing them doesn’t share anything, and hangouts aren’t really being tracked."),
+        ("Texts stay in the app.", "“Send a text” opens a look-alike Messages thread instead of sending anything.")
+    ]
+
+    var body: some View {
+        ZStack {
+            KithTheme.canvas(false).ignoresSafeArea()
+
+            VStack(alignment: .leading, spacing: 26) {
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("Before You Start")
+                        .font(.kithHeading)
+                        .foregroundStyle(KithTheme.ink(false))
+                    Text("A few things about this demo.")
+                        .font(.kithCaption)
+                        .foregroundStyle(KithTheme.secondary(false))
+                }
+
+                VStack(alignment: .leading, spacing: 18) {
+                    ForEach(points, id: \.title) { point in
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text(point.title)
+                                .font(.kithCardTitle)
+                                .foregroundStyle(KithTheme.ink(false))
+                            Text(point.detail)
+                                .font(.kithCaption)
+                                .foregroundStyle(KithTheme.secondary(false))
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                    }
+                }
+
+                KithPillButton(title: "Start the Demo", action: onStart)
+                    .frame(maxWidth: .infinity)
+                    .padding(.top, 8)
+            }
+            .padding(.horizontal, 32)
+        }
+        .accessibilityElement(children: .contain)
     }
 }
 
@@ -150,20 +230,32 @@ struct MainTabView: View {
             FriendsView()
                 .tabItem { navLabel("Friends", icon: "NavFriends", tab: .friends) }
                 .tag(AppTab.friends)
+                .phoneTabBarOnMac()
 
             TodayView()
                 .tabItem { navLabel("Home", icon: "NavToday", tab: .today) }
                 .tag(AppTab.today)
+                .phoneTabBarOnMac()
 
             RecapsView(onOpenProfile: { tab = .profile })
                 .tabItem { navLabel("Recaps", icon: "NavRecaps", tab: .recaps) }
                 .tag(AppTab.recaps)
+                .phoneTabBarOnMac()
 
             ProfileView(onLogOut: onLogOut)
                 .tabItem { navLabel("Profile", icon: "NavProfile", tab: .profile) }
                 .tag(AppTab.profile)
+                .phoneTabBarOnMac()
         }
         .tint(KithTheme.navActive)
+        #if targetEnvironment(macCatalyst)
+        // A Mac puts tabs along the top; Bloom keeps the phone's floating bar.
+        .overlay(alignment: .bottom) {
+            PhoneTabBar(selection: $tab)
+                .padding(.horizontal, 25)
+                .padding(.bottom, 10)
+        }
+        #endif
         .environment(hangouts)
     }
 
@@ -173,3 +265,73 @@ struct MainTabView: View {
         Label(title, image: self.tab == tab ? icon + "Fill" : icon)
     }
 }
+
+// MARK: - The phone's tab bar, on a Mac
+
+private extension View {
+    /// Hides the system tab bar on a Mac, where it would sit along the top.
+    @ViewBuilder
+    func phoneTabBarOnMac() -> some View {
+        #if targetEnvironment(macCatalyst)
+        toolbar(.hidden, for: .tabBar)
+        #else
+        self
+        #endif
+    }
+}
+
+#if targetEnvironment(macCatalyst)
+/// iOS 26's floating tab bar, drawn by hand for the Mac: a glass capsule of
+/// four icons with labels, the current one on a soft pill in the nav colour.
+private struct PhoneTabBar: View {
+    @Binding var selection: AppTab
+    @Namespace private var pill
+
+    private let items: [(tab: AppTab, title: String, icon: String)] = [
+        (.friends, "Friends", "NavFriends"),
+        (.today, "Home", "NavToday"),
+        (.recaps, "Recaps", "NavRecaps"),
+        (.profile, "Profile", "NavProfile")
+    ]
+
+    var body: some View {
+        HStack(spacing: 0) {
+            ForEach(items, id: \.title) { item in
+                let chosen = selection == item.tab
+                Button {
+                    withAnimation(.spring(response: 0.32, dampingFraction: 0.85)) { selection = item.tab }
+                } label: {
+                    VStack(spacing: 3) {
+                        Image(chosen ? item.icon + "Fill" : item.icon)
+                            .renderingMode(.template)
+                            .resizable()
+                            .scaledToFit()
+                            .frame(width: 26, height: 26)
+                        Text(item.title)
+                            .font(.system(size: 10, weight: .medium))
+                    }
+                    .foregroundStyle(chosen ? KithTheme.navActive : KithTheme.ink(false))
+                    .frame(maxWidth: .infinity)
+                    .frame(height: 54)
+                    .background {
+                        if chosen {
+                            Capsule()
+                                .fill(Color.black.opacity(0.06))
+                                .matchedGeometryEffect(id: "pill", in: pill)
+                        }
+                    }
+                    .contentShape(Capsule())
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel(item.title)
+                .accessibilityAddTraits(chosen ? [.isSelected, .isButton] : .isButton)
+            }
+        }
+        .padding(4)
+        .background(.regularMaterial, in: Capsule())
+        .overlay(Capsule().strokeBorder(Color.white.opacity(0.6), lineWidth: 0.5))
+        .shadow(color: .black.opacity(0.12), radius: 16, y: 6)
+        .sensoryFeedback(.selection, trigger: selection)
+    }
+}
+#endif

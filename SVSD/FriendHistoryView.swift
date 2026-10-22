@@ -13,6 +13,11 @@ struct FriendHistoryView: View {
     @State private var screenWidth: CGFloat = 393
     @State private var openHangout: RecentHangout.ID?
     @State private var selectedMonth = FriendHistoryView.monthName
+    /// The month on screen. It trails `selectedMonth` by a beat, so the old
+    /// entries can leave before the new ones step in.
+    @State private var displayedMonth = FriendHistoryView.monthName
+    @State private var listShown = true
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     private var isDark: Bool { colorScheme == .dark }
     private var ink: Color { KithTheme.ink(isDark) }
@@ -20,7 +25,8 @@ struct FriendHistoryView: View {
     private var scale: CGFloat { screenWidth / 393 }
 
     var body: some View {
-        let theirs = store.hangouts.filter { $0.contact.name == contact.name }
+        let theirs = entries(for: displayedMonth)
+        let weeks = weeks(of: theirs)
 
         ZStack(alignment: .topLeading) {
             KithTheme.canvas(isDark).ignoresSafeArea()
@@ -53,15 +59,19 @@ struct FriendHistoryView: View {
                     month
                         .padding(.top, 14)
 
-                    ForEach(Array(weeks(of: theirs).enumerated()), id: \.offset) { _, week in
+                    ForEach(Array(weeks.enumerated()), id: \.offset) { weekIndex, week in
+                        let before = weeks.prefix(weekIndex).reduce(0) { $0 + $1.hangouts.count + 1 }
+
                         Text(week.label)
                             .font(.kithSubrange)
                             .foregroundStyle(secondary)
                             .padding(.top, 18)
+                            .stepIn(listShown, order: before, reduceMotion: reduceMotion)
 
                         VStack(spacing: 10) {
-                            ForEach(week.hangouts) { hangout in
+                            ForEach(Array(week.hangouts.enumerated()), id: \.element.id) { index, hangout in
                                 entry(hangout)
+                                    .stepIn(listShown, order: before + 1 + index, reduceMotion: reduceMotion)
                             }
                         }
                         .padding(.top, 10)
@@ -81,7 +91,14 @@ struct FriendHistoryView: View {
             }
         }
         .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { screenWidth = $0 }
-        .fullScreenCover(isPresented: Binding(get: { openHangout != nil }, set: { if !$0 { openHangout = nil } })) {
+        .onChange(of: selectedMonth) { _, month in
+            listShown = false
+            DispatchQueue.main.asyncAfter(deadline: .now() + (reduceMotion ? 0 : 0.16)) {
+                displayedMonth = month
+                listShown = true
+            }
+        }
+        .drawer(isPresented: Binding(get: { openHangout != nil }, set: { if !$0 { openHangout = nil } })) {
             if let index = store.hangouts.firstIndex(where: { $0.id == openHangout }) {
                 MeetupDetailView(hangout: Bindable(store).hangouts[index]) { openHangout = nil }
             }
@@ -102,6 +119,11 @@ struct FriendHistoryView: View {
                         .offset(x: -12 * scale, y: 3 * scale)
                         .accessibilityHidden(true)
                 }
+                // The glow reaches well past the circle it sits behind, so the
+                // row's spacing alone would measure the gap from the photo and
+                // let the gradient run into the text. This hands the overhang
+                // back, so the gap you see is gradient to text.
+                .padding(.trailing, 24 * scale)
 
             VStack(alignment: .leading, spacing: 6) {
                 Text(contact.name)
@@ -157,7 +179,9 @@ struct FriendHistoryView: View {
             .frame(maxWidth: .infinity)
             .contentShape(Rectangle())
         }
-        .accessibilityLabel("\(selectedMonth), change month")
+        .accessibilityLabel("Month")
+        .accessibilityValue(selectedMonth)
+        .accessibilityHint("Shows another month")
         .sensoryFeedback(.selection, trigger: selectedMonth)
     }
 
@@ -172,7 +196,7 @@ struct FriendHistoryView: View {
                 HStack(spacing: 3) {
                     if feelings.isEmpty {
                         FeelingTag(
-                            "Needs reflection",
+                            "Needs Reflection",
                             fill: KithTheme.canvas(isDark),
                             text: secondary
                         )
@@ -223,19 +247,124 @@ struct FriendHistoryView: View {
     }
 
     static let monthName = "October"
-    /// The demo only has the one month's worth, so the rest just relabel.
-    static let months = ["August", "September", "October"]
-    private static let weekLabels = ["12-19", "20-27"]
+    /// The demo only has October's worth of entries, so the rest just relabel.
+    static let months = [
+        "January", "February", "March", "April", "May", "June",
+        "July", "August", "September", "October", "November", "December"
+    ]
 
+    // MARK: - Entries per month
+
+    /// This month is the real log. The others are invented on the spot so the
+    /// page actually changes when you switch, seeded off the friend and the
+    /// month so flipping back and forth shows the same thing again.
+    private func entries(for month: String) -> [RecentHangout] {
+        let theirs = store.hangouts.filter { $0.contact.name == contact.name }
+        guard month != Self.monthName else { return theirs }
+        return Self.invented(for: contact, month: month)
+    }
+
+    /// What you did, with the kinds of place it happens.
+    private static let outings: [(activity: String, spots: [String])] = [
+        ("Coffee", ["Vienna Cafe", "Eleventh House"]),
+        ("Brunch", ["Another Broken Egg"]),
+        ("Lunch", ["Purdue Memorial Union"]),
+        ("Walk", ["Celery Bog", "Wabash Riverfront", "Purdue Mall"]),
+        ("Study session", ["Hicks Library", "Purdue Memorial Union"]),
+        ("Dinner", ["Lafayette Brewing", "Main Street"]),
+        ("Bouldering", ["Climbing gym"]),
+        ("Farmers market", ["Lafayette Farmers Market"])
+    ]
+    private static let startTimes = ["9 AM", "10 AM", "12 PM", "1 PM", "3 PM", "5 PM", "7 PM"]
+    private static let lengths = ["45 min", "1 hour", "1 hr 30 min", "2 hours", "3 hours"]
+    private static let weekdays = [
+        "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"
+    ]
+
+    static func invented(for contact: KithContact, month: String) -> [RecentHangout] {
+        let seed = (months.firstIndex(of: month) ?? 0) * 31 + contact.name.count
+        var roll = Roll(seed)
+        let feelings = Feeling.allCases.filter { $0 != .somethingElse }
+
+        return (0..<roll.next(from: 3, to: 6)).map { _ in
+            let outing = outings[roll.next(outings.count)]
+            let activity = outing.activity
+            let spot = outing.spots[roll.next(outing.spots.count)]
+            // A third are left unreflected, the way the real log has them.
+            var picked: Set<Feeling> = []
+            if roll.next(3) > 0 {
+                for _ in 0..<roll.next(from: 1, to: 2) {
+                    picked.insert(feelings[roll.next(feelings.count)])
+                }
+            }
+            return RecentHangout(
+                contact: contact,
+                title: "\(activity) with \(contact.firstName)",
+                detail: "\(weekdays[roll.next(weekdays.count)]) · \(lengths[roll.next(lengths.count)]) · \(spot)",
+                startTime: startTimes[roll.next(startTimes.count)],
+                place: "\(spot), Lafayette",
+                photos: RecentHangout.photos(at: spot, seed: seed + roll.next(7)),
+                feelings: picked
+            )
+        }
+    }
+
+    /// A small deterministic generator — same seed, same entries, every time.
+    struct Roll {
+        private var state: UInt64
+
+        init(_ seed: Int) {
+            state = UInt64(truncatingIfNeeded: seed) &* 2654435761 &+ 1
+        }
+
+        mutating func next(_ upper: Int) -> Int {
+            state = state &* 6364136223846793005 &+ 1442695040888963407
+            return Int((state >> 33) % UInt64(max(1, upper)))
+        }
+
+        mutating func next(from low: Int, to high: Int) -> Int {
+            low + next(max(1, high - low + 1))
+        }
+    }
+
+    /// Entries spread over the month's real weeks (Sunday to Saturday, as the
+    /// comp's "12-19" runs), up to three of them, newest first.
     private func weeks(of hangouts: [RecentHangout]) -> [Week] {
         guard !hangouts.isEmpty else { return [] }
-        let perWeek = max(1, Int((Double(hangouts.count) / 2).rounded(.up)))
+        let labels = Self.weekRanges(of: displayedMonth)
+        let used = Array(labels.suffix(min(3, labels.count, hangouts.count)).reversed())
+        let perWeek = max(1, Int((Double(hangouts.count) / Double(used.count)).rounded(.up)))
         return stride(from: 0, to: hangouts.count, by: perWeek).enumerated().map { index, start in
             Week(
-                label: Self.weekLabels[min(index, Self.weekLabels.count - 1)],
+                label: used[min(index, used.count - 1)],
                 hangouts: Array(hangouts[start..<min(start + perWeek, hangouts.count)])
             )
         }
+    }
+
+    /// "1–7", "8-14"… for each Sunday-to-Saturday week of the month this
+    /// year, clipped to the month. The current month stops at this week.
+    static func weekRanges(of month: String) -> [String] {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.firstWeekday = 1
+        let now = Date()
+        guard let monthNumber = months.firstIndex(of: month).map({ $0 + 1 }),
+              let start = calendar.date(from: DateComponents(year: calendar.component(.year, from: now), month: monthNumber, day: 1)),
+              let days = calendar.range(of: .day, in: .month, for: start)
+        else { return ["1–7"] }
+
+        let isCurrent = calendar.isDate(start, equalTo: now, toGranularity: .month)
+        let lastDay = isCurrent ? calendar.component(.day, from: now) : days.count
+        var ranges: [String] = []
+        var day = 1
+        while day <= lastDay {
+            guard let date = calendar.date(byAdding: .day, value: day - 1, to: start) else { break }
+            let weekday = calendar.component(.weekday, from: date)
+            let end = min(days.count, day + (7 - weekday))
+            ranges.append("\(day)–\(end)")
+            day = end + 1
+        }
+        return ranges.isEmpty ? ["1–7"] : ranges
     }
 }
 
@@ -247,5 +376,20 @@ extension Feeling {
 
     var pillFill: Color {
         isDraining ? KithTheme.feelingDraining : KithTheme.feelingSelected
+    }
+}
+
+private extension View {
+    /// History's rows: out quickly together, back in with just a hint of a
+    /// stagger, so a new month reads as new without putting on a show.
+    func stepIn(_ shown: Bool, order: Int, reduceMotion: Bool) -> some View {
+        opacity(shown ? 1 : 0)
+            .offset(y: shown || reduceMotion ? 0 : 3)
+            .animation(
+                reduceMotion
+                    ? .easeOut(duration: 0.2)
+                    : (shown ? .easeOut(duration: 0.25).delay(Double(min(order, 5)) * 0.025) : .easeOut(duration: 0.1)),
+                value: shown
+            )
     }
 }

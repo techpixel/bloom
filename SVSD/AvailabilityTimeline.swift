@@ -165,7 +165,7 @@ struct AvailabilityTimeline: View {
         }
         .frame(height: trackHeight + labelGap + labelHeight)
         .accessibilityElement(children: style == .slotPicker ? .contain : .ignore)
-        .accessibilityLabel("Shared availability")
+        .accessibilityLabel("Shared Availability")
         .accessibilityValue(accessibilitySummary)
         .accessibilityHint(
             style == .slotPicker

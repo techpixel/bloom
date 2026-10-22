@@ -279,10 +279,14 @@ struct MessageDraft: Identifiable {
 extension View {
     /// Opens the real Messages composer when this device can send texts, and
     /// the look-alike thread otherwise (the simulator, an iPad without SMS).
+    ///
+    /// Addressed by name, not by number: looking the friend up in Contacts
+    /// would fire the system permission prompt mid-demo, right after onboarding
+    /// has already mimed asking for it. Nothing here reads the phone.
     func messageSheet(_ draft: Binding<MessageDraft?>) -> some View {
         sheet(item: draft) { draft in
             if MFMessageComposeViewController.canSendText() {
-                MessageComposeSheet()
+                MessageComposeSheet(recipients: [draft.contact.name])
                     .ignoresSafeArea()
             } else {
                 MessageThreadView(contact: draft.contact)
@@ -291,8 +295,7 @@ extension View {
     }
 }
 
-/// `MFMessageComposeViewController`, left blank. The sample friends have no
-/// phone numbers, so the recipient is the user's to pick as well.
+/// `MFMessageComposeViewController`, addressed to whoever it's given.
 struct MessageComposeSheet: UIViewControllerRepresentable {
     @Environment(\.dismiss) private var dismiss
 

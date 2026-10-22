@@ -22,7 +22,7 @@ struct RecentHangout: Identifiable {
     let contact: KithContact
     var title: String
     var detail: String
-    /// The detail page's title reads "9am with Manitej".
+    /// The detail page's title reads "9 AM with Manitej".
     var startTime: String
     var place: String
     /// Coming back often enough is what makes Bloom offer to name the place.
@@ -62,12 +62,13 @@ struct TodayView: View {
     /// The wait between your last tap on a feeling and the card filing it.
     @State private var settling: Task<Void, Never>?
     @Namespace private var recentCards
-    @AppStorage("profile.name") private var name = "Amber"
+    @AppStorage("profile.name") private var name = DemoCast.placeholderName
     /// Taking a break (Profile) pauses suggestions along with everything shared.
     @AppStorage("settings.onBreak") private var onBreak = false
     /// The entrance plays the first time Home opens each launch, not on every
     /// return to the tab.
     @State private var entered = TodayView.hasEntered
+    @State private var friendSectionShown = TodayView.hasEntered
     private static var hasEntered = false
 
     /// Newest first; the first is the one Home asks you to reflect on.
@@ -128,42 +129,46 @@ struct TodayView: View {
                             .padding(.top, 20)
                             .padding(.horizontal, 20)
 
-                        Text("See A Friend")
-                            .font(.kithBodyStrong)
-                            .foregroundStyle(ink)
-                            .accessibilityAddTraits(.isHeader)
-                            .padding(.top, 26)
-                            .padding(.horizontal, 20)
-                            .entrance(4, visible: entered)
-
-                        if onBreak {
-                            breakNote
-                                .padding(.top, 12)
+                        // The whole section enters as one, after Recent, on its own
+                        // flag: the carousel inside kept a view-scoped entrance from
+                        // animating, so this one is flipped with an explicit animation.
+                        VStack(alignment: .leading, spacing: 0) {
+                            Text("See a Friend")
+                                .font(.kithBodyStrong)
+                                .foregroundStyle(ink)
+                                .accessibilityAddTraits(.isHeader)
+                                .padding(.top, 26)
                                 .padding(.horizontal, 20)
-                                .entrance(5, visible: entered)
-                        } else {
-                            RangeTabs(selection: $range, counts: nudgeCounts)
+
+                            if onBreak {
+                                breakNote
+                                    .padding(.top, 12)
+                                    .padding(.horizontal, 20)
+                            } else {
+                                RangeTabs(selection: $range, counts: nudgeCounts)
+                                    .padding(.top, 12)
+                                    .padding(.horizontal, 16)
+
+                                // A new range is a new set of friends: the old cards blur
+                                // out as the new ones blur in, in the same place.
+                                VStack(spacing: 4) {
+                                    ZStack {
+                                        carousel
+                                            .id(range)
+                                            .transition(.blurReplace)
+                                    }
+
+                                    if !nudges.isEmpty {
+                                        sendButton
+                                            .frame(width: cardWidth - 32)
+                                    }
+                                }
                                 .padding(.top, 12)
-                                .padding(.horizontal, 16)
-                                .entrance(5, visible: entered)
-
-                            // A new range is a new set of friends: the old cards blur
-                            // out as the new ones blur in, in the same place.
-                            VStack(spacing: 4) {
-                                ZStack {
-                                    carousel
-                                        .id(range)
-                                        .transition(.blurReplace)
-                                }
-
-                                if !nudges.isEmpty {
-                                    sendButton
-                                        .frame(width: cardWidth - 32)
-                                        .entrance(7, visible: entered)
-                                }
                             }
-                            .padding(.top, 12)
                         }
+                        .opacity(friendSectionShown ? 1 : 0)
+                        .offset(y: friendSectionShown || reduceMotion ? 0 : 12)
+                        .blur(radius: friendSectionShown || reduceMotion ? 0 : 4)
                     }
                     .padding(.bottom, 28)
                 }
@@ -191,7 +196,7 @@ struct TodayView: View {
             if open == nil { loadDraft() }
         }
         .onAppear(perform: loadDraft)
-        .fullScreenCover(isPresented: Binding(get: { openHangout != nil }, set: { if !$0 { openHangout = nil } })) {
+        .drawer(isPresented: Binding(get: { openHangout != nil }, set: { if !$0 { openHangout = nil } })) {
             if let index = recents.firstIndex(where: { $0.id == openHangout }) {
                 MeetupDetailView(hangout: Bindable(store).hangouts[index]) { openHangout = nil }
             }
@@ -251,6 +256,9 @@ struct TodayView: View {
         try? await Task.sleep(for: .milliseconds(60))
         entered = true
         Self.hasEntered = true
+        withAnimation(reduceMotion ? .easeOut(duration: 0.3) : .easeOut(duration: 0.6).delay(0.8)) {
+            friendSectionShown = true
+        }
     }
 
     private var partOfDay: String {
@@ -265,10 +273,10 @@ struct TodayView: View {
     /// you, and Bloom isn't looking.
     private var breakNote: some View {
         VStack(spacing: 8) {
-            Text("You're taking a break")
+            Text("You’re taking a break")
                 .font(.kithCardTitle)
                 .foregroundStyle(ink)
-            Text("Friends can't see you or when you're free, so Bloom won't suggest anyone. Turn it off in Profile whenever you're ready.")
+            Text("Friends can’t see you or when you’re free, so Bloom won’t suggest anyone. Turn it off in Profile whenever you’re ready.")
                 .font(.kithCaption)
                 .foregroundStyle(secondary)
                 .multilineTextAlignment(.center)
@@ -289,7 +297,7 @@ struct TodayView: View {
     @ViewBuilder
     private var carousel: some View {
         if nudges.isEmpty {
-            Text("No one's free \(range == .thisWeek ? "this week" : range.title.lowercased()) yet.")
+            Text("No one’s free \(range == .thisWeek ? "this week" : range.title.lowercased()) yet.")
                 .font(.kithSecondary)
                 .foregroundStyle(secondary)
                 .frame(maxWidth: .infinity)
@@ -311,7 +319,6 @@ struct TodayView: View {
                 .contentMargins(.horizontal, 51, for: .scrollContent)
                 // A tick as each card settles, not when the carousel first parks.
                 .sensoryFeedback(.selection, trigger: focusedSlot) { old, new in old != nil && new != nil }
-                .entrance(6, visible: entered)
             .onAppear {
                 // A beat later, once the strip has laid out, or the jump is lost.
                 let start = middleSlot
@@ -336,10 +343,13 @@ struct TodayView: View {
                 Text(nudge.contact.name)
                     .font(.kithCardTitle)
                     .foregroundStyle(ink)
+                // Two lines kept for each, filled or not, so every card in the
+                // carousel is the same height.
                 Text(nudge.seen)
                     .font(.kithCaption)
                     .foregroundStyle(secondary)
                     .multilineTextAlignment(.center)
+                    .lineLimit(2, reservesSpace: true)
                     .lineLimit(2, reservesSpace: true)
             }
             .frame(maxWidth: .infinity)
@@ -348,6 +358,7 @@ struct TodayView: View {
                 .font(.kithCaptionStrong)
                 .foregroundStyle(KithTheme.suggestionAccent)
                 .multilineTextAlignment(.center)
+                .lineLimit(2, reservesSpace: true)
         }
         .padding(.horizontal, 10)
         .padding(.vertical, 20)
@@ -374,7 +385,7 @@ struct TodayView: View {
                 composing = MessageDraft(contact: nudge.contact)
             }
         } label: {
-            Text("Send a text")
+            Text("Send a Text")
                 .font(.kithCaption)
                 .kithCapCentered(13, relativeTo: .footnote)
                 .foregroundStyle(KithTheme.canvas(isDark))
@@ -385,14 +396,14 @@ struct TodayView: View {
                 .contentShape(Rectangle())
         }
         .buttonStyle(PressableButtonStyle())
-        .accessibilityLabel(focusedNudge.map { "Send \($0.contact.firstName) a text" } ?? "Send a text")
+        .accessibilityLabel(focusedNudge.map { "Send \($0.contact.firstName) a text" } ?? "Send a Text")
     }
 
     // MARK: - Recent
 
     /// The latest hangout asks how it went (comp 345:1849). Pick a feeling or
     /// two and, after a beat, the card shrinks into a row like the ones under
-    /// it (comp 407:1532); "Something else" asks for a few words first. Under
+    /// it (comp 407:1532); "Something Else" asks for a few words first. Under
     /// it, the last few friends you've already answered for.
     @ViewBuilder
     private var recentSection: some View {
@@ -405,13 +416,11 @@ struct TodayView: View {
                     .entrance(2, visible: entered)
 
                 VStack(spacing: 10) {
-                    if let asking = recents.first, asking.feelings.isEmpty {
+                    if let asking = awaitingReflection {
                         reflectionCard(asking)
                             .matchedGeometryEffect(id: asking.id, in: recentCards)
                             .transition(.opacity)
-                    }
-
-                    if !answeredRecents.isEmpty {
+                    } else if !answeredRecents.isEmpty {
                         ScrollView(.horizontal, showsIndicators: false) {
                             LazyHStack(spacing: 10) {
                                 ForEach(answeredRecents) { hangout in
@@ -432,6 +441,16 @@ struct TodayView: View {
         }
     }
 
+    /// Recent's one action item: the newest hangout, while it still wants a
+    /// reflection. Deliberately not "any unanswered hangout" — older ones are
+    /// reflected on from their own page, and treating them as action items here
+    /// would mean the queue never empties, so the card could never settle into
+    /// its row. It also keeps this in step with `answer()`, which writes to the
+    /// newest entry.
+    private var awaitingReflection: RecentHangout? {
+        recents.first.flatMap { $0.feelings.isEmpty ? $0 : nil }
+    }
+
     /// The newest hangout with each friend, the ones still wanting a reflection
     /// first so they're what you land on.
     private var answeredRecents: [RecentHangout] {
@@ -443,9 +462,11 @@ struct TodayView: View {
         }
         // The one the card above is already asking about isn't repeated here.
         let asking = recents.first.flatMap { $0.feelings.isEmpty ? $0.id : nil }
-        return newestPerFriend
-            .filter { $0.id != asking }
-            .sorted { $0.feelings.isEmpty && !$1.feelings.isEmpty }
+        // Newest first, deliberately unsorted beyond that: the card settles into
+        // the row at the head of the strip, so the one you just answered has to
+        // be the one sitting there. Sorting unanswered entries to the front sent
+        // it to the far end, where the shrink played off-screen.
+        return newestPerFriend.filter { $0.id != asking }
     }
 
     private func reflectionCard(_ hangout: RecentHangout) -> some View {
@@ -472,8 +493,10 @@ struct TodayView: View {
                 Button("Text \(friend.firstName)", systemImage: "message") {
                     composing = MessageDraft(contact: friend)
                 }
-                Button("Plan another", systemImage: "calendar") {
-                    planning = friend
+                if !DemoCast.isJudge {
+                    Button("Plan Another", systemImage: "calendar") {
+                        planning = friend
+                    }
                 }
             }
 
@@ -519,7 +542,7 @@ struct TodayView: View {
     }
 
     /// Two feelings is an answer; one waits a little longer in case a second
-    /// is coming. "Something else" waits for words and the Save button.
+    /// is coming. "Something Else" waits for words and the Save button.
     private func settle(after picked: Set<Feeling>) {
         settling?.cancel()
         guard !picked.isEmpty, !picked.contains(.somethingElse) else { return }
@@ -575,7 +598,9 @@ struct TodayView: View {
 // MARK: - Sample data
 
 extension TodayNudge {
-    static let sample: [TodayNudge] = [
+    static let sample: [TodayNudge] = DemoCast.isJudge ? DemoCast.nudges : comps
+
+    private static let comps: [TodayNudge] = [
         TodayNudge(
             contact: KithContact(
                 name: "Jadden Picardal",
@@ -583,8 +608,8 @@ extension TodayNudge {
             ),
             seen: "You saw them at Vienna Cafe yesterday.",
             free: [
-                .today: "You’re both free at 4:00pm.",
-                .thisWeek: "You’re both free Wednesday at 4:00pm."
+                .today: "You’re both free at 4:00 PM.",
+                .thisWeek: "You’re both free Wednesday at 4:00 PM."
             ],
             idea: "grab a coffee?"
         ),
@@ -595,8 +620,8 @@ extension TodayNudge {
             ),
             seen: "You saw them at Eleventh House on Monday.",
             free: [
-                .today: "You’re both free at 7:30pm.",
-                .tomorrow: "You’re both free tomorrow at 6:00pm.",
+                .today: "You’re both free at 7:30 PM.",
+                .tomorrow: "You’re both free at 6:00 PM.",
                 .thisWeek: "You’re both free Friday evening."
             ],
             idea: "split a plate of fries?"
@@ -608,7 +633,7 @@ extension TodayNudge {
             ),
             seen: "You haven’t seen them in three weeks.",
             free: [
-                .tomorrow: "You’re both free tomorrow at noon.",
+                .tomorrow: "You’re both free at noon.",
                 .thisWeek: "You’re both free Thursday afternoon."
             ],
             idea: "go for a walk?"
@@ -620,7 +645,7 @@ extension TodayNudge {
             ),
             seen: "You saw them Sunday. They’re around campus today.",
             free: [
-                .today: "You’re both free at 6:00pm.",
+                .today: "You’re both free at 6:00 PM.",
                 .thisWeek: "You’re both free Saturday morning."
             ],
             idea: "cook something?"
@@ -632,8 +657,8 @@ extension TodayNudge {
             ),
             seen: "You saw them at Vienna Cafe two weeks ago.",
             free: [
-                .tomorrow: "You’re both free tomorrow at 3:00pm.",
-                .thisWeek: "You’re both free Sunday at 2:00pm."
+                .tomorrow: "You’re both free at 3:00 PM.",
+                .thisWeek: "You’re both free Sunday at 2:00 PM."
             ],
             idea: "study together?"
         )
@@ -644,6 +669,7 @@ extension RecentHangout {
     /// The comps' hangouts first — the newest is Home's — then enough more that
     /// each friend's recap count adds up to real entries.
     static let sample: [RecentHangout] = {
+        if DemoCast.isJudge { return DemoCast.hangouts }
         let manitej = KithContact(
             name: "Manitej Boorgu",
             face: .photo(Portrait(asset: "FriendAvatar", width: 2.4184, height: 1.6158, x: 0.0634, y: -0.0342))
@@ -667,7 +693,7 @@ extension RecentHangout {
                 contact: manitej,
                 title: "Coffee with Manitej",
                 detail: "Monday · 2 hours · Eleventh House",
-                startTime: "9am",
+                startTime: "9 AM",
                 place: "Eleventh House, Lafayette",
                 visitsThisMonth: 3,
                 photos: Self.compPhotos,
@@ -677,7 +703,7 @@ extension RecentHangout {
                 contact: manitej,
                 title: "Studying with Manitej",
                 detail: "Monday · 2 hours · Eleventh House",
-                startTime: "1pm",
+                startTime: "1 PM",
                 place: "Eleventh House, Lafayette",
                 photos: Self.compPhotos,
                 feelings: [.connected, .energized],
@@ -688,9 +714,9 @@ extension RecentHangout {
                 contact: ray,
                 title: "Dinner with Ray",
                 detail: "Sunday · 1 hr 20 min · Home",
-                startTime: "7pm",
+                startTime: "7 PM",
                 place: "Home",
-                photos: Self.photoRoll(3),
+                photos: Self.photos(at: "Home", seed: 3),
                 feelings: [.atEase],
                 highlightIn: [.week, .month]
             )
@@ -703,11 +729,15 @@ extension RecentHangout {
             (friend("Dev"), 3), (friend("Theo"), 2), (friend("Amara"), 1), (jadden, 1)
         ]
         let plans = [
-            ("Lunch", "12pm", "1 hour", "Purdue Memorial Union"),
-            ("Walk", "5pm", "45 min", "Celery Bog"),
-            ("Study session", "3pm", "2 hours", "Hicks Library"),
-            ("Coffee", "10am", "1 hr 10 min", "Vienna Cafe"),
-            ("Dinner", "7pm", "1 hr 30 min", "Lafayette Brewing")
+            ("Lunch", "12 PM", "1 hour", "Purdue Memorial Union"),
+            ("Walk", "5 PM", "45 min", "Celery Bog"),
+            ("Study session", "3 PM", "2 hours", "Hicks Library"),
+            ("Coffee", "10 AM", "1 hr 10 min", "Vienna Cafe"),
+            ("Dinner", "7 PM", "1 hr 30 min", "Lafayette Brewing"),
+            ("Bouldering", "6 PM", "1 hr 30 min", "Climbing gym"),
+            ("Farmers market", "9 AM", "1 hour", "Lafayette Farmers Market"),
+            ("Walk", "4 PM", "1 hour", "Wabash Riverfront"),
+            ("Hang", "2 PM", "45 min", "Purdue Mall")
         ]
         let days = ["Saturday", "Friday", "Thursday", "Wednesday", "Tuesday"]
         var step = 0
@@ -722,7 +752,7 @@ extension RecentHangout {
                     detail: "\(days[step % days.count]) · \(plan.2) · \(plan.3)",
                     startTime: plan.1,
                     place: "\(plan.3), Lafayette",
-                    photos: Self.photoRoll(step),
+                    photos: Self.photos(at: plan.3, seed: step),
                     feelings: round == 0 ? answered[contact.firstName] ?? [] : []
                 ))
                 step += 1
@@ -731,7 +761,7 @@ extension RecentHangout {
         return hangouts
     }()
 
-    /// All four of the comp's photos, for the entry it draws in full.
+    /// The comp's own four (69:869), kept for the entry it draws in full.
     static let compPhotos: [MeetupPhoto] = [
         .asset("MeetupPhotoPlant"),
         .asset("MeetupPhotoDrink"),
@@ -739,9 +769,28 @@ extension RecentHangout {
         .asset("MeetupPhotoLatte")
     ]
 
-    /// Three of them, rotated, so no two neighbouring entries look identical.
-    static func photoRoll(_ seed: Int) -> [MeetupPhoto] {
-        (0..<3).map { compPhotos[(seed + $0) % compPhotos.count] }
+    /// Real photos of each place (Wikimedia Commons, see PHOTO-CREDITS.md), so
+    /// a walk at Celery Bog shows the bog and lunch at the Union shows the Union.
+    private static let spotPhotos: [(match: [String], assets: [String])] = [
+        (["Memorial Union"], ["SpotMemorialUnion1", "SpotMemorialUnion2", "SpotMemorialUnion3"]),
+        (["Celery Bog"], ["SpotCeleryBog1", "SpotCeleryBog2", "SpotCeleryBog3"]),
+        (["Library"], ["SpotLibrary1", "SpotLibrary2", "SpotLibrary3"]),
+        (["Lafayette Brewing", "Main Street"], ["SpotDowntownLafayette1", "SpotDowntownLafayette2", "SpotDowntownLafayette3"]),
+        (["Climbing"], ["SpotClimbingGym1", "SpotClimbingGym2", "SpotClimbingGym3"]),
+        (["Farmers Market"], ["SpotFarmersMarket1", "SpotFarmersMarket2", "SpotFarmersMarket3"]),
+        (["Wabash", "Riverfront"], ["SpotWabashRiver1", "SpotWabashRiver2", "SpotWabashRiver3"]),
+        (["Purdue Mall", "Bell Tower"], ["SpotPurdueCampus1", "SpotPurdueCampus2", "SpotPurdueCampus3", "SpotPurdueCampus4"]),
+        (["Home"], ["SpotCafe3", "SpotCafe1"])
+    ]
+    /// Cafés and anywhere unlisted.
+    private static let cafePhotos = ["SpotCafe1", "SpotCafe2", "SpotCafe3"]
+
+    /// Two to four photos of the place, starting at a different one per
+    /// entry so two visits to the same spot don't look identical.
+    static func photos(at place: String, seed: Int) -> [MeetupPhoto] {
+        let pool = spotPhotos.first { spot in spot.match.contains { place.localizedCaseInsensitiveContains($0) } }?.assets ?? cafePhotos
+        let count = min(pool.count, 2 + abs(seed) % 3)
+        return (0..<count).map { .asset(pool[(abs(seed) + $0) % pool.count]) }
     }
 }
 

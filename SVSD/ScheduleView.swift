@@ -42,7 +42,7 @@ enum ScheduleRange: String, CaseIterable, Identifiable {
     }
 }
 
-/// "Find a time that works" — the overlap view from the Kith comp.
+/// "Find a Time That Works" — the overlap view from the Kith comp.
 struct ScheduleView: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.colorScheme) private var colorScheme
@@ -106,7 +106,7 @@ struct ScheduleView: View {
 
     private var picker: some View {
         VStack(spacing: 20) {
-            Text("Find a time that works")
+            Text("Find a Time That Works")
                 .font(.kithHeading)
                 .foregroundStyle(ink)
                 .multilineTextAlignment(.center)
@@ -160,7 +160,7 @@ struct ScheduleView: View {
                     .focused($messageFocused)
             }
             .frame(minHeight: 120, maxHeight: 258.379)
-            .accessibilityLabel("Your message")
+            .accessibilityLabel("Your Message")
         }
         .padding(.top, 15)
     }

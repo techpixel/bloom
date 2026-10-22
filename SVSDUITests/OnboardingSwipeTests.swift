@@ -31,15 +31,17 @@ final class OnboardingSwipeTests: XCTestCase {
     }
 
     func testSwipeMovesForwardAndBackThroughPermissions() {
-        let app = launch(step: 4)
+        let app = launch(step: 5)
         waitFor(app, "Contacts")
         answerPrompt(app, "Allow Full Access")
 
+        // Each page's prompt covers it until answered.
         app.swipeLeft()
-        waitFor(app, "Background location")
         answerPrompt(app, "Allow While Using App")
+        waitFor(app, "Background location")
 
         app.swipeLeft()
+        answerPrompt(app, "Allow Full Access")
         waitFor(app, "Photos")
 
         app.swipeRight()
@@ -62,8 +64,8 @@ final class OnboardingSwipeTests: XCTestCase {
 
         app.swipeLeft()
         XCTAssertTrue(
-            app.staticTexts["welcome amber!"].waitForExistence(timeout: 5),
-            "expected the celebrate screen once a name is in"
+            app.staticTexts["Add a photo of you."].waitForExistence(timeout: 5),
+            "expected the photo step once a name is in"
         )
     }
 
@@ -84,16 +86,16 @@ final class OnboardingSwipeTests: XCTestCase {
     }
 }
 
-/// The permission screens raise their prompt on their own, and "next" stays
+/// The permission screens raise their prompt on their own, and Next stays
 /// greyed until it's answered.
 final class PermissionPromptTests: XCTestCase {
     func testPromptAppearsAndUnlocksNext() {
         let app = XCUIApplication()
-        app.launchArguments = ["-OnboardStep", "4"]
+        app.launchArguments = ["-OnboardStep", "5"]
         app.launch()
 
         XCTAssertTrue(app.staticTexts["Contacts"].waitForExistence(timeout: 5))
-        let next = app.buttons["next"].firstMatch
+        let next = app.buttons["Next"].firstMatch
         XCTAssertTrue(next.waitForExistence(timeout: 5))
         XCTAssertFalse(next.isEnabled, "next should wait for an answer")
 

@@ -8,3 +8,7 @@ DerivedData/
 
 # In-app feedback notes and their screenshots (debug builds write these)
 feedback/
+
+# Local build output
+build/
+dist/

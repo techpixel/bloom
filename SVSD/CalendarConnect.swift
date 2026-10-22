@@ -43,7 +43,7 @@ extension SystemAlert {
     /// iOS 17's wording for full calendar access.
     static let calendar = SystemAlert(
         title: "“Bloom” Would Like Full Access to Your Calendar",
-        message: "Bloom checks when you're busy so it can find times you and your friends are both free.",
+        message: "Bloom checks when you’re busy so it can find times you and your friends are both free.",
         actions: [
             Action(title: "Allow Full Access", grants: true, isPreferred: true),
             Action(title: "Don’t Allow")
@@ -58,7 +58,8 @@ struct GoogleCalendarConnectSheet: View {
     @Environment(\.dismiss) private var dismiss
 
     /// The sample account the demo connects.
-    static let account = "amber.demo@gmail.com"
+    static let account = DemoCast.isJudge ? "you@gmail.com" : "amber.demo@gmail.com"
+    @AppStorage("profile.name") private var name = DemoCast.placeholderName
 
     private enum Stage { case account, calendars, connecting }
 
@@ -114,18 +115,18 @@ struct GoogleCalendarConnectSheet: View {
         VStack(alignment: .leading, spacing: 24) {
             header(
                 "Connect Google Calendar",
-                "Bloom only sees when you're busy. Event names and details stay in Google Calendar."
+                "Bloom only sees when you’re busy. Event names and details stay in Google Calendar."
             )
 
             Button { stage = .calendars } label: {
                 HStack(spacing: 12) {
-                    Text("A")
+                    Text(String(name.prefix(1)).uppercased())
                         .font(.kithBodyStrong)
                         .foregroundStyle(ink)
                         .frame(width: 36, height: 36)
                         .background(FriendBlob.lavender.color, in: Circle())
                     VStack(alignment: .leading, spacing: 3) {
-                        Text("Amber")
+                        Text(name)
                             .font(.kithCardTitle)
                             .foregroundStyle(ink)
                         Text(Self.account)

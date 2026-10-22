@@ -60,6 +60,7 @@ extension OnboardingStep {
         case .welcome: return "Welcome"
         case .phone: return "We’ll need your number"
         case .name: return "What’s your name?"
+        case .profilePhoto: return "Add a photo of you"
         case .celebrate: return "Welcome, <name>!"
         case .contacts: return "Permission · Contacts"
         case .location: return "Permission · Location"

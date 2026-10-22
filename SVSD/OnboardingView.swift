@@ -1,3 +1,5 @@
+import ContactsUI
+import PhotosUI
 import SwiftUI
 import UIKit
 
@@ -6,6 +8,7 @@ enum OnboardingStep: Int, CaseIterable, Equatable {
     case welcome
     case phone
     case name
+    case profilePhoto
     case celebrate
     case contacts
     case location
@@ -47,14 +50,14 @@ struct OnboardingView: View {
     @State private var didStart = false
     @State private var name: String
     /// What the rest of the app calls you, once you've said it here.
-    @AppStorage("profile.name") private var savedName = "Amber"
+    @AppStorage("profile.name") private var savedName = DemoCast.placeholderName
     @State private var phone: String
     @State private var code = ""
     @State private var search = ""
     @State private var addedFriends: Set<String> = []
 
     @State private var demoPermissions: Set<OnboardingStep> = []
-    /// Permission pages whose prompt you've answered, either way. "next"
+    /// Permission pages whose prompt you've answered, either way. "Next"
     /// stays greyed until then.
     @State private var answeredPermissions: Set<OnboardingStep> = []
     /// Shared with Profile, so a calendar connected here shows there too.
@@ -69,6 +72,12 @@ struct OnboardingView: View {
 
     /// The intro: the seed sits beside "bloom", the word pulls away to the
     /// right, and the seed grows into the welcome logo.
+    /// The photo you pick for your profile, saved where Profile reads it.
+    @State private var profilePhoto: UIImage? = ProfilePhotoStore.load()
+    @State private var pickedProfileItem: PhotosPickerItem?
+    @State private var choosingProfilePhoto = false
+    @State private var choosingContactCard = false
+
     @State private var logoSettled = false
     @State private var wordmarkOpacity = 1.0
     @State private var wordmarkOffset: CGFloat = 0
@@ -155,6 +164,10 @@ struct OnboardingView: View {
                 if step != .welcome || controlsVisible {
                     pageControl(size: size)
                 }
+
+                if step != .welcome {
+                    skipButton(size: size)
+                }
             }
             .frame(width: size.width, height: size.height)
             .contentShape(Rectangle())
@@ -173,9 +186,18 @@ struct OnboardingView: View {
             .animation(stepAnimation, value: hasName)
         }
         .background(surface)
-        .ignoresSafeArea(.container, edges: .all)
+        // The keyboard's area too: the page does its own (small) lift, so
+        // iOS shrinking the layout as well sent everything to the top.
+        .ignoresSafeArea(.all, edges: .all)
         .statusBarHidden(true)
         .onAppear(perform: beginEntrance)
+        // The typing pages bring their keyboard up, since its "Next" key is
+        // the way forward.
+        .task(id: step) {
+            guard step == .phone || step == .name else { return }
+            try? await Task.sleep(for: .milliseconds(450))
+            if step == .phone || step == .name { fieldFocused = true }
+        }
         .onReceive(
             NotificationCenter.default.publisher(for: UIResponder.keyboardWillChangeFrameNotification)
         ) { note in
@@ -194,11 +216,13 @@ struct OnboardingView: View {
         }
     }
 
-    /// How far the page has to rise to keep the button clear of the keyboard.
+    /// How far the page rises to keep the field you're typing in clear of the
+    /// keyboard. The keyboard's "Next" key is how you move on from these
+    /// pages, so there's no button to lift above it.
     private func keyboardLift(in size: CGSize) -> CGFloat {
         guard keyboardHeight > 0 else { return 0 }
-        let buttonBottom = size.height * (708 / designHeight) + 22
-        return max(0, buttonBottom + 16 - (size.height - keyboardHeight))
+        let fieldBottom = size.height * 0.695 + 44
+        return max(0, fieldBottom + 24 - (size.height - keyboardHeight))
     }
 
     private var stepAnimation: Animation? {
@@ -302,12 +326,19 @@ struct OnboardingView: View {
         case .welcome: return controlsVisible
         case .phone: return phoneStage == .number ? hasPhone : hasCode
         case .name: return hasName
+        case .profilePhoto: return profilePhoto != nil
         case .celebrate: return true
         case .contacts, .location, .photos: return answeredPermissions.contains(step)
         case .calendar: return calendarAnswered
         case .friends: return addedFriends.count >= 2
         }
     }
+
+    private func continueFromKeyboard() {
+        guard canGoForward else { return }
+        goForward()
+    }
+
 
     private func goForward() {
         if step == .phone, phoneStage == .number {
@@ -337,6 +368,8 @@ struct OnboardingView: View {
         withAnimation(reduceMotion ? nil : .easeInOut(duration: 0.28)) {
             phoneStage = .code
         }
+        // The keyboard comes back for the code; its "Next" is the way on.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { fieldFocused = true }
     }
 
     // MARK: - Pages
@@ -369,6 +402,8 @@ struct OnboardingView: View {
             phoneScreen(size: size)
         case .name:
             nameScreen(size: size)
+        case .profilePhoto:
+            profilePhotoScreen(size: size)
         case .celebrate:
             celebrateScreen(size: size)
         case .contacts, .location, .photos:
@@ -411,7 +446,8 @@ struct OnboardingView: View {
         // the welcome screen it doesn't travel: the seed pops up where it sits.
         .offset(x: leavingWelcome ? 0 : blobDrift, y: -keyboardLift(in: size) * 0.45)
         .scaleEffect(step == .welcome ? 0.2 : 1)
-        .opacity(step == .welcome ? 0 : 1)
+        // The photo step has your face where the blob would be.
+        .opacity(step == .welcome || step == .profilePhoto ? 0 : 1)
         .animation(reduceMotion ? .easeOut(duration: 0.2) : .spring(response: 0.5, dampingFraction: 0.62), value: step == .welcome)
         .animation(reduceMotion ? nil : .spring(response: 0.34, dampingFraction: 0.8), value: blobStage)
         .accessibilityHidden(true)
@@ -434,7 +470,7 @@ struct OnboardingView: View {
         switch incoming ?? step {
         case .welcome, .phone:
             return hasPhone || phoneStage == .code ? BlobStage.star.rawValue : BlobStage.circle.rawValue
-        case .name:
+        case .name, .profilePhoto:
             return BlobStage.star.rawValue
         case .celebrate:
             return BlobStage.starFilled.rawValue
@@ -491,7 +527,7 @@ struct OnboardingView: View {
                 )
                 .accessibilityLabel("Bloom")
 
-            Text("the other side of friendship")
+            Text("Nothing blooms by accident.")
                 .font(.kithTagline)
                 .foregroundStyle(mark)
                 .position(x: size.width / 2, y: size.height * 0.585)
@@ -499,7 +535,7 @@ struct OnboardingView: View {
                 .blur(radius: taglineVisible ? 0 : 4)
                 .offset(y: taglineVisible ? 0 : 12)
 
-            pillButton("let’s get started", size: size) { advance() }
+            pillButton("Let’s Get Started", size: size) { advance() }
                 .opacity(controlsVisible ? 1 : 0)
                 .blur(radius: controlsVisible ? 0 : 4)
                 .offset(y: controlsVisible ? 0 : 12)
@@ -579,12 +615,7 @@ struct OnboardingView: View {
             .frame(width: 269, alignment: .leading)
             .position(x: size.width / 2, y: size.height * 0.695)
 
-            switch phoneStage {
-            case .number:
-                pillButton("next", size: size, enabled: hasPhone, action: showCodePrompt)
-            case .code:
-                pillButton("next", size: size, enabled: hasCode) { advance() }
-            }
+
         }
     }
 
@@ -600,7 +631,110 @@ struct OnboardingView: View {
             .frame(width: 269, alignment: .leading)
             .position(x: size.width / 2, y: size.height * 0.695)
 
-            pillButton("next", size: size, enabled: hasName) { advance() }
+        }
+    }
+
+    // MARK: - Your photo
+
+    /// After your name, a face for it: friends see it on their dial and in
+    /// their recaps. It sits where the blob would be, and becomes the photo
+    /// Profile shows.
+    private func profilePhotoScreen(size: CGSize) -> some View {
+        let side: CGFloat = 190
+
+        return ZStack {
+            Button { choosingProfilePhoto = true } label: {
+                Group {
+                    if let profilePhoto {
+                        Image(uiImage: profilePhoto)
+                            .resizable()
+                            .scaledToFill()
+                            .frame(width: side, height: side)
+                            .clipShape(Circle())
+                            .transition(.scale(scale: 0.85).combined(with: .opacity))
+                    } else {
+                        Circle()
+                            .fill(KithTheme.uiFill(isDark))
+                            .overlay(
+                                Circle().strokeBorder(secondary.opacity(0.5), style: StrokeStyle(lineWidth: 1.5, dash: [5, 6]))
+                            )
+                            .overlay(
+                                Image(systemName: "plus")
+                                    .font(.system(size: 34, weight: .light))
+                                    .foregroundStyle(mark)
+                            )
+                            .frame(width: side, height: side)
+                    }
+                }
+                .background {
+                    if profilePhoto != nil {
+                        Image("ProfileGlow")
+                            .resizable()
+                            .frame(width: side * 1.37, height: side * 1.33)
+                            .rotationEffect(.degrees(90.45))
+                            .accessibilityHidden(true)
+                    }
+                }
+            }
+            .buttonStyle(PressableButtonStyle())
+            .position(x: size.width / 2, y: size.height * 0.307)
+            .accessibilityLabel(profilePhoto == nil ? "Add a Photo" : "Your photo")
+            .accessibilityHint("Choose a photo of you")
+
+            VStack(alignment: .leading, spacing: 8) {
+                Text("Add a photo of you.")
+                    .font(.kithPrompt)
+                    .foregroundStyle(mark)
+                Text("Friends see it on their dial and in their recaps.")
+                    .font(.kithCaption)
+                    .foregroundStyle(secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+
+                // The photo iMessage already shows for you, from your own card.
+                Button { choosingContactCard = true } label: {
+                    Label("Use My Contact Card", systemImage: "person.crop.circle")
+                        .font(.kithCaptionStrong)
+                        .foregroundStyle(mark)
+                        .frame(minHeight: 44)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(PressableButtonStyle())
+                .accessibilityHint("Pick yourself in Contacts to use that photo")
+            }
+            .frame(width: 269, alignment: .leading)
+            .position(x: size.width / 2, y: size.height * 0.695)
+
+            pillButton(
+                profilePhoto == nil ? "Choose a Photo" : "Next",
+                size: size,
+                style: profilePhoto == nil ? .muted : .solid
+            ) {
+                if profilePhoto == nil { choosingProfilePhoto = true } else { advance() }
+            }
+        }
+        .photosPicker(isPresented: $choosingProfilePhoto, selection: $pickedProfileItem, matching: .images)
+        .sheet(isPresented: $choosingContactCard) {
+            ContactCardPicker { image in
+                choosingContactCard = false
+                guard let image else { return }
+                ProfilePhotoStore.save(image)
+                withAnimation(reduceMotion ? nil : .spring(response: 0.45, dampingFraction: 0.8)) {
+                    profilePhoto = image
+                }
+            }
+            .ignoresSafeArea()
+        }
+        .onChange(of: pickedProfileItem) { _, item in
+            guard let item else { return }
+            Task {
+                defer { pickedProfileItem = nil }
+                guard let data = try? await item.loadTransferable(type: Data.self),
+                      let image = UIImage(data: data) else { return }
+                ProfilePhotoStore.save(image)
+                withAnimation(reduceMotion ? nil : .spring(response: 0.45, dampingFraction: 0.8)) {
+                    profilePhoto = image
+                }
+            }
         }
     }
 
@@ -625,11 +759,15 @@ struct OnboardingView: View {
                 .foregroundStyle(mark)
                 .tint(mark)
                 .textFieldStyle(.plain)
-                .keyboardType(keyboard)
+                // Number pads have no return key, so digits come on the
+                // numbers-and-punctuation keyboard, whose return key is "Next".
+                .keyboardType(keyboard == .default ? .default : .numbersAndPunctuation)
                 .textContentType(contentType)
                 .textInputAutocapitalization(keyboard == .default ? .words : .never)
                 .autocorrectionDisabled()
                 .focused($fieldFocused)
+                .submitLabel(.next)
+                .onSubmit(continueFromKeyboard)
                 .padding(.horizontal, 12)
                 .frame(height: 38.317)
                 .background(
@@ -650,7 +788,12 @@ struct OnboardingView: View {
 
     private func celebrateScreen(size: CGSize) -> some View {
         ZStack {
-            Text("welcome \(name.isEmpty ? "friend" : name.lowercased())!")
+            // The blob has just become theirs, so it carries their face.
+            YourAvatar(diameter: 128)
+                .position(x: size.width / 2, y: size.height * 0.355)
+                .transition(.opacity.combined(with: .scale(scale: 0.86)))
+
+            Text("Welcome, \(name.isEmpty ? "friend" : name)!")
                 .font(.kithWelcome)
                 .foregroundStyle(mark)
                 .lineLimit(1)
@@ -658,7 +801,7 @@ struct OnboardingView: View {
                 .frame(width: size.width - 48)
                 .position(x: size.width / 2, y: size.height * 0.754)
 
-            pillButton("let’s go", size: size) { advance() }
+            pillButton("Let’s Go", size: size) { advance() }
         }
     }
 
@@ -672,7 +815,7 @@ struct OnboardingView: View {
 
         return ZStack {
             VStack(alignment: .leading, spacing: 16) {
-                Text("Enabling permissions")
+                Text("Allow Access")
                     .font(.kithHeading)
                     .foregroundStyle(mark)
 
@@ -700,7 +843,7 @@ struct OnboardingView: View {
 
             // Greyed until you've answered the prompt.
             pillButton(
-                "next",
+                "Next",
                 size: size,
                 enabled: answered,
                 accessibilityHint: answered ? "" : "Answer the \(copy.title.lowercased()) prompt first"
@@ -710,8 +853,8 @@ struct OnboardingView: View {
         }
     }
 
-    /// Either answer unlocks "next"; you move on yourself. On the calendar page
-    /// a "Don't Allow" still counts as an answer, and Google stays an option.
+    /// Either answer unlocks "Next"; you move on yourself. On the calendar page
+    /// a "Don’t Allow" still counts as an answer, and Google stays an option.
     private func resolvePermission(granted: Bool) {
         permissionAlert = nil
         if step == .calendar {
@@ -732,13 +875,13 @@ struct OnboardingView: View {
     // MARK: - Calendar
 
     /// The permission page's layout, with a choice of calendar under the copy.
-    /// Either one connects; the pill reads "skip" until one has.
+    /// Either one connects; the pill reads "Skip" until one has.
     private func calendarScreen(size: CGSize) -> some View {
         let copy = permissionCopy(for: .calendar)
 
         return ZStack {
             VStack(alignment: .leading, spacing: 16) {
-                Text("Enabling permissions")
+                Text("Allow Access")
                     .font(.kithHeading)
                     .foregroundStyle(mark)
 
@@ -763,7 +906,7 @@ struct OnboardingView: View {
             .position(x: size.width / 2, y: size.height * 0.622)
 
             pillButton(
-                "next",
+                "Next",
                 size: size,
                 enabled: calendarAnswered,
                 accessibilityHint: calendarAnswered ? "" : "Choose a calendar first"
@@ -862,7 +1005,7 @@ struct OnboardingView: View {
                         .foregroundStyle(mark)
                         .minimumScaleFactor(0.8)
                         .lineLimit(1)
-                    Text("Bloom is built off of human connection. Add or search for friends you know!")
+                    Text("Add at least two friends to get started. Search for anyone you know.")
                         .font(.kithSecondary)
                         .foregroundStyle(secondary)
                         .fixedSize(horizontal: false, vertical: true)
@@ -1057,6 +1200,23 @@ struct OnboardingView: View {
         .position(x: size.width / 2, y: size.height * (708 / designHeight))
     }
 
+    /// Straight into the app, for anyone who doesn't want the tour. On the
+    /// photo step it skips just the photo and carries on.
+    private func skipButton(size: CGSize) -> some View {
+        Button { step == .profilePhoto ? advance() : finish() } label: {
+            Text("Skip")
+                .font(.kithCaptionStrong)
+                .foregroundStyle(KithTheme.secondary(isDark))
+                .frame(minHeight: 44)
+                .frame(maxWidth: 120)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(PressableButtonStyle())
+        .position(x: size.width / 2, y: size.height * (762 / designHeight))
+        .accessibilityLabel("Skip")
+        .accessibilityHint(step == .profilePhoto ? "Carries on without a photo" : "Goes straight into Bloom")
+    }
+
     private func pageControl(size: CGSize) -> some View {
         HStack(spacing: 8) {
             ForEach(OnboardingStep.allCases, id: \.rawValue) { page in
@@ -1183,7 +1343,7 @@ struct Friend: Identifiable {
     }
 
     /// The four from the comp, then enough others to make the list feel real.
-    static let sample: [Friend] = [
+    static let sample: [Friend] = DemoCast.isJudge ? DemoCast.onboardingFriends : [
         Friend(name: "Manitej Boorgu", face: .photo("FriendAvatar"), isOnKith: true),
         Friend(name: "Michelle Xuan", face: .plate("AvatarPink")),
         Friend(name: "Ray Arayilikath", face: .plate("AvatarYellow")),
@@ -1231,5 +1391,39 @@ enum PhoneEntry {
 
     static func code(_ text: String) -> String {
         String(text.filter(\.isWholeNumber).prefix(codeLength))
+    }
+}
+
+/// The system contact picker, for taking your photo off your own card. It
+/// runs out of process, so it needs no Contacts permission. Hands back the
+/// card's photo, or nil if the card has none or you cancel.
+private struct ContactCardPicker: UIViewControllerRepresentable {
+    var onPick: (UIImage?) -> Void
+
+    func makeUIViewController(context: Context) -> CNContactPickerViewController {
+        let picker = CNContactPickerViewController()
+        picker.delegate = context.coordinator
+        picker.displayedPropertyKeys = [CNContactImageDataKey]
+        return picker
+    }
+
+    func updateUIViewController(_ controller: CNContactPickerViewController, context: Context) {}
+
+    func makeCoordinator() -> Coordinator { Coordinator(onPick: onPick) }
+
+    final class Coordinator: NSObject, CNContactPickerDelegate {
+        let onPick: (UIImage?) -> Void
+        init(onPick: @escaping (UIImage?) -> Void) { self.onPick = onPick }
+
+        func contactPicker(_ picker: CNContactPickerViewController, didSelect contact: CNContact) {
+            // Reading a key the picker didn't fetch throws, so check first.
+            let fetched = contact.isKeyAvailable(CNContactImageDataAvailableKey) && contact.isKeyAvailable(CNContactImageDataKey)
+            let data = fetched && contact.imageDataAvailable ? contact.imageData : nil
+            onPick(data.flatMap(UIImage.init(data:)))
+        }
+
+        func contactPickerDidCancel(_ picker: CNContactPickerViewController) {
+            onPick(nil)
+        }
     }
 }

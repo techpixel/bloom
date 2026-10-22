@@ -7,10 +7,10 @@ import SwiftUI
 enum Feeling: String, CaseIterable, Identifiable {
     case connected = "Connected"
     case energized = "Energized"
-    case atEase = "At ease"
+    case atEase = "At Ease"
     case distant = "Distant"
     case draining = "Draining"
-    case somethingElse = "Something else"
+    case somethingElse = "Something Else"
 
     var id: String { rawValue }
 }
@@ -51,6 +51,10 @@ struct MeetupDetailView: View {
     var onBack: () -> Void
 
     @State private var naming = false
+    @State private var editingDetails = false
+    @State private var draftActivity = ""
+    @State private var draftTime = ""
+    @State private var draftPlace = ""
     @State private var draftName = ""
     @State private var draftTags: [String] = []
     @State private var choosingPhoto = false
@@ -82,15 +86,31 @@ struct MeetupDetailView: View {
             ScrollView(.vertical, showsIndicators: false) {
                 VStack(spacing: 0) {
                     header
-                        .padding(.top, 29 * scale)
+                        .padding(.top, 74.65 * scale)
 
-                    Text("\(hangout.startTime) with \(hangout.contact.firstName)")
-                        .font(.kithHeading)
-                        .foregroundStyle(ink)
-                        .multilineTextAlignment(.center)
-                        .accessibilityAddTraits(.isHeader)
-                        // Clear of the glow, which reaches past the photo.
-                        .padding(.top, 32 * scale)
+                    HStack(spacing: 8) {
+                        Text("\(hangout.startTime) with \(hangout.contact.firstName)")
+                            .font(.kithHeading)
+                            .foregroundStyle(ink)
+                            .multilineTextAlignment(.center)
+                            .accessibilityAddTraits(.isHeader)
+
+                        Button(action: beginEditingDetails) {
+                            Image("PencilIcon")
+                                .renderingMode(.template)
+                                .resizable()
+                                .frame(width: 16, height: 16)
+                                .foregroundStyle(secondary)
+                                // A 44pt target without pushing the pencil off the title.
+                                .padding(14)
+                                .contentShape(Rectangle())
+                                .padding(-14)
+                        }
+                        .buttonStyle(PressableButtonStyle())
+                        .accessibilityLabel("Edit Details")
+                    }
+                    // Clear of the glow, which reaches past the photo.
+                    .padding(.top, 26 * scale)
 
                     placeRow
                         .padding(.top, 6)
@@ -108,7 +128,7 @@ struct MeetupDetailView: View {
                             .frame(height: 2)
                         reflectionSection
                     }
-                    .padding(.top, 24)
+                    .padding(.top, 26 * scale)
                 }
                 .padding(.horizontal, 20)
                 .padding(.bottom, 40)
@@ -122,6 +142,7 @@ struct MeetupDetailView: View {
         .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { screenWidth = $0 }
         .animation(reduceMotion ? nil : .spring(response: 0.38, dampingFraction: 0.86), value: offersToName)
         .animation(reduceMotion ? nil : .spring(response: 0.38, dampingFraction: 0.86), value: naming)
+        .sheet(isPresented: $editingDetails) { detailsEditor }
         .photosPicker(isPresented: $choosingPhoto, selection: $pickedPhoto, matching: .images)
         .onChange(of: pickedPhoto) { _, item in
             guard let item else { return }
@@ -142,16 +163,17 @@ struct MeetupDetailView: View {
     // MARK: - Header
 
     /// The friend's photo over the comp's soft lavender glow.
+    /// Comp 69:869: a 145pt photo, its glow scaled to match.
     private var header: some View {
-        ContactAvatar(contact: hangout.contact, diameter: 191.632 * scale)
+        ContactAvatar(contact: hangout.contact, diameter: 144.886 * scale)
             .background {
                 // Rasterised from the comp's vector; its grain and blur are SVG
                 // filters the asset catalog can't draw.
                 Image("MeetupGlow")
                     .resizable()
-                    .frame(width: 277.048 * scale, height: 270.964 * scale)
+                    .frame(width: 209.5 * scale, height: 204.9 * scale)
                     .rotationEffect(.degrees(-28.12))
-                    .offset(x: -24.6 * scale, y: 6.2 * scale)
+                    .offset(x: -18.6 * scale, y: 4.7 * scale)
                     .accessibilityHidden(true)
             }
     }
@@ -314,7 +336,7 @@ struct MeetupDetailView: View {
         let width = screenWidth - 40
         let unit = (width - 8) / 2
         let small = (unit - 8) / 2
-        let extra = Array(hangout.photos.dropFirst(3))
+        let photos = hangout.photos
 
         return VStack(alignment: .leading, spacing: 12) {
             Text("Photos")
@@ -329,17 +351,13 @@ struct MeetupDetailView: View {
                         photoTile(at: 1, width: unit, height: unit)
                         HStack(spacing: 8) {
                             photoTile(at: 2, width: small, height: small)
-                            addTile(side: small)
-                        }
-                    }
-                }
-
-                if !extra.isEmpty {
-                    LazyVGrid(columns: Array(repeating: GridItem(.fixed(small), spacing: 8), count: 4), alignment: .leading, spacing: 8) {
-                        ForEach(extra) { photo in
-                            photoImage(photo)
-                                .frame(width: small, height: small)
-                                .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+                            // The bento holds four for now. The plus closes it
+                            // until the fourth photo arrives and takes its slot.
+                            if photos.count > 3 {
+                                photoTile(at: 3, width: small, height: small)
+                            } else {
+                                addTile(side: small)
+                            }
                         }
                     }
                 }
@@ -381,20 +399,151 @@ struct MeetupDetailView: View {
                 .background(fill, in: RoundedRectangle(cornerRadius: 6, style: .continuous))
         }
         .buttonStyle(PressableButtonStyle())
-        .accessibilityLabel("Add photos")
+        .accessibilityLabel("Add Photos")
     }
 
     // MARK: - Reflection
 
+    /// Comp 69:869: how it felt as tags you can change here, then your notes.
     private var reflectionSection: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Text("Reflection (private to you)")
-                .font(.kithSecondary)
+        VStack(alignment: .leading, spacing: 12) {
+            VStack(alignment: .leading, spacing: 3) {
+                Text("Reflection")
+                    .font(KithType.font(.w130, 14, .subheadline))
+                    .foregroundStyle(ink)
+                    .accessibilityAddTraits(.isHeader)
+                Text("Only you can see this.")
+                    .font(.kithFine)
+                    .foregroundStyle(secondary)
+            }
+
+            VStack(alignment: .leading, spacing: 5) {
+                Text("Our time together felt:")
+                    .font(.kithFine)
+                    .foregroundStyle(secondary)
+
+                FlowLayout(spacing: 3, lineSpacing: 3) {
+                    ForEach(Feeling.allCases) { feeling in
+                        let on = hangout.feelings.contains(feeling)
+                        Button {
+                            withAnimation(reduceMotion ? nil : .easeOut(duration: 0.15)) {
+                                if on { hangout.feelings.remove(feeling) } else { hangout.feelings.insert(feeling) }
+                            }
+                        } label: {
+                            FeelingTag(
+                                feeling.rawValue,
+                                fill: on ? KithTheme.feelingSelected : KithTheme.uiFill(isDark),
+                                text: on ? nil : secondary
+                            )
+                            .frame(minHeight: 32)
+                            .contentShape(Rectangle())
+                        }
+                        .buttonStyle(PressableButtonStyle())
+                        .accessibilityAddTraits(on ? .isSelected : [])
+                    }
+                }
+                .sensoryFeedback(.selection, trigger: hangout.feelings)
+            }
+
+            VStack(alignment: .leading, spacing: 5) {
+                Text("Notes")
+                    .font(.kithFine)
+                    .foregroundStyle(secondary)
+
+                ReflectionField(text: $hangout.reflection, minHeight: 94, fill: KithTheme.suggestionCard(isDark), cornerRadius: 6)
+            }
+        }
+    }
+
+    // MARK: - Details
+
+    /// What the event was, when, and where. The comp doesn't draw an editor, so
+    /// this borrows the page's own idioms: capsule fields and the ink pill.
+    private var detailsEditor: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            Text("Edit Details")
+                .font(.kithHeading)
                 .foregroundStyle(ink)
                 .accessibilityAddTraits(.isHeader)
 
-            ReflectionField(text: $hangout.reflection, minHeight: 122, fill: KithTheme.suggestionCard(isDark), cornerRadius: 6)
+            detailField("Activity", text: $draftActivity, prompt: "Coffee")
+            detailField("Time", text: $draftTime, prompt: "9 AM")
+            detailField("Place", text: $draftPlace, prompt: "Eleventh House, Lafayette")
+
+            Button(action: saveDetails) {
+                Text("Save")
+                    .font(.kithBody)
+                    .kithCapCentered(17, relativeTo: .body)
+                    .foregroundStyle(KithTheme.canvas(isDark))
+                    .frame(maxWidth: .infinity)
+                    .frame(height: 44)
+                    .background(ink, in: Capsule())
+            }
+            .buttonStyle(PressableButtonStyle())
+            .padding(.top, 4)
+
+            Spacer(minLength: 0)
         }
+        .padding(20)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(KithTheme.canvas(isDark).ignoresSafeArea())
+        .presentationDetents([.height(400)])
+        .presentationDragIndicator(.visible)
+    }
+
+    private func detailField(_ label: String, text: Binding<String>, prompt: String) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text(label)
+                .font(.kithCaption)
+                .foregroundStyle(secondary)
+
+            TextField(prompt, text: text)
+                .font(.kithBody)
+                .foregroundStyle(ink)
+                .tint(ink)
+                .submitLabel(.done)
+                .autocorrectionDisabled()
+                .padding(.horizontal, 14)
+                .frame(height: 44)
+                .background(fill, in: Capsule())
+                .accessibilityLabel(label)
+        }
+    }
+
+    /// "Coffee with Manitej" -> "Coffee". The name is rebuilt on save, so only
+    /// the activity is yours to type.
+    private var activity: String {
+        hangout.title.components(separatedBy: " with ").first ?? hangout.title
+    }
+
+    private func beginEditingDetails() {
+        draftActivity = activity
+        draftTime = hangout.startTime
+        draftPlace = hangout.place
+        editingDetails = true
+    }
+
+    private func saveDetails() {
+        let trimmed = { (s: String) in s.trimmingCharacters(in: .whitespacesAndNewlines) }
+        let newActivity = trimmed(draftActivity)
+        let newTime = trimmed(draftTime)
+        let newPlace = trimmed(draftPlace)
+
+        if !newActivity.isEmpty {
+            hangout.title = "\(newActivity) with \(hangout.contact.firstName)"
+        }
+        if !newTime.isEmpty { hangout.startTime = newTime }
+        if !newPlace.isEmpty {
+            hangout.place = newPlace
+            // `detail` reads "Monday · 2 hours · Eleventh House": its last
+            // segment is the place's short name, so keep the two in step.
+            var parts = hangout.detail.components(separatedBy: " · ")
+            if !parts.isEmpty {
+                parts[parts.count - 1] = newPlace.components(separatedBy: ",").first.map(trimmed) ?? newPlace
+                hangout.detail = parts.joined(separator: " · ")
+            }
+        }
+        editingDetails = false
     }
 
     // MARK: - Actions
@@ -411,6 +560,8 @@ struct MeetupDetailView: View {
 
     private func addPhoto(_ item: PhotosPickerItem) async {
         defer { pickedPhoto = nil }
+        // Four is all the bento holds for now.
+        guard hangout.photos.count < 4 else { return }
         guard let data = try? await item.loadTransferable(type: Data.self),
               let image = UIImage(data: data)
         else { return }
@@ -419,6 +570,79 @@ struct MeetupDetailView: View {
 }
 
 // MARK: - Shared pieces
+
+/// Photos full size, one at a time: swipe across for the next, swipe down or
+/// tap the cross to put them away.
+struct PhotoCarousel: View {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    let photos: [MeetupPhoto]
+    @State var index: Int
+    var onClose: () -> Void
+
+    @State private var drop: CGFloat = 0
+
+    var body: some View {
+        ZStack(alignment: .top) {
+            Color.black
+                .opacity(1 - min(0.6, abs(drop) / 400))
+                .ignoresSafeArea()
+
+            TabView(selection: $index) {
+                ForEach(Array(photos.enumerated()), id: \.offset) { offset, photo in
+                    photo.image
+                        .resizable()
+                        .scaledToFit()
+                        .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+                        .padding(.horizontal, 12)
+                        .tag(offset)
+                        .accessibilityLabel("Photo \(offset + 1) of \(photos.count)")
+                }
+            }
+            .tabViewStyle(.page(indexDisplayMode: photos.count > 1 ? .always : .never))
+            .offset(y: drop)
+            .simultaneousGesture(
+                DragGesture(minimumDistance: 20)
+                    .onChanged { value in
+                        guard abs(value.translation.height) > abs(value.translation.width) else { return }
+                        drop = value.translation.height
+                    }
+                    .onEnded { value in
+                        if abs(value.translation.height) > 120 || abs(value.predictedEndTranslation.height) > 300 {
+                            onClose()
+                        } else {
+                            withAnimation(reduceMotion ? nil : .spring(response: 0.35, dampingFraction: 0.85)) { drop = 0 }
+                        }
+                    }
+            )
+
+            HStack {
+                Button(action: onClose) {
+                    Image(systemName: "xmark")
+                        .font(.system(size: 15, weight: .semibold))
+                        .foregroundStyle(.white)
+                        .frame(width: 36, height: 36)
+                        .background(.white.opacity(0.16), in: Circle())
+                        .frame(width: 44, height: 44)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(PressableButtonStyle())
+                .accessibilityLabel("Close")
+
+                Spacer()
+
+                Text("\(index + 1) of \(photos.count)")
+                    .font(.kithCaption)
+                    .monospacedDigit()
+                    .foregroundStyle(.white.opacity(0.8))
+            }
+            .padding(.horizontal, 16)
+            .padding(.top, 12)
+            .opacity(1 - min(1, abs(drop) / 160))
+        }
+        .statusBarHidden(true)
+    }
+}
 
 /// The feelings as chips you can pick any number of; green when picked.
 struct FeelingChips: View {
@@ -476,7 +700,7 @@ struct ReflectionField: View {
 
         KithTextArea(
             text: $text,
-            placeholder: "Add a few words about what stood out...",
+            placeholder: "Add a few words about what stood out…",
             textColor: UIColor(KithTheme.ink(isDark)),
             placeholderColor: UIColor(KithTheme.recentMeta),
             minHeight: minHeight - 24

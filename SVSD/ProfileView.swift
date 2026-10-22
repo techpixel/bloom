@@ -8,7 +8,7 @@ import UIKit
 struct ProfileView: View {
     @Environment(\.colorScheme) private var colorScheme
 
-    @AppStorage("profile.name") private var name = "Amber"
+    @AppStorage("profile.name") private var name = DemoCast.placeholderName
     @AppStorage("settings.push") private var pushNotifications = true
     @AppStorage("settings.reminders") private var reminders = true
     @AppStorage("settings.nearby") private var friendsNearby = true
@@ -16,13 +16,12 @@ struct ProfileView: View {
     /// One switch for everything Bloom shares. Home goes quiet while it's on.
     @AppStorage("settings.onBreak") private var onBreak = false
 
-    @State private var editingName = false
+    @State private var editingProfile = false
     @State private var choosingPhoto = false
     @State private var pickedPhoto: PhotosPickerItem?
     /// The photo you chose, if any; the comp's photo otherwise.
     @State private var customPhoto: UIImage? = ProfilePhotoStore.load()
     @State private var draftName = ""
-    @FocusState private var nameFocused: Bool
     @State private var confirmingLogOut = false
     /// How many Google calendars are connected; 0 is not connected.
     @AppStorage("calendar.google") private var googleCalendars = 0
@@ -52,8 +51,20 @@ struct ProfileView: View {
     var body: some View {
         ScrollView {
             VStack(spacing: 0) {
+                HStack {
+                    Spacer(minLength: 0)
+                    editButton
+                }
+                .padding(.horizontal, gutter)
+                // The dev menu's wrench sits in this corner, but only in debug
+                // builds; shift clear of it there and leave release untouched.
+                #if DEBUG
+                .padding(.trailing, 44)
+                #endif
+                .padding(.top, 10 * scale)
+
                 portrait
-                    .padding(.top, 50 * scale)
+                    .padding(.top, 14 * scale)
 
                 // The glow reaches past the photo's edge; the name clears it.
                 nameRow
@@ -67,7 +78,7 @@ struct ProfileView: View {
                     section("Account") {
                         linkRow(
                             icon: "SettingsLogOut",
-                            title: "Log out",
+                            title: "Log Out",
                             detail: "Sign out of your account",
                             showsChevron: false,
                             tint: KithTheme.logOut
@@ -87,11 +98,7 @@ struct ProfileView: View {
         .scrollDismissesKeyboard(.immediately)
         .background(KithTheme.canvas(isDark))
         .statusBarHidden(true)
-        .photosPicker(isPresented: $choosingPhoto, selection: $pickedPhoto, matching: .images)
-        .onChange(of: pickedPhoto) { _, item in
-            guard let item else { return }
-            Task { await usePhoto(item) }
-        }
+        .sheet(isPresented: $editingProfile) { profileEditor }
         .sheet(isPresented: $connectingGoogle) {
             GoogleCalendarConnectSheet { googleCalendars = $0 }
         }
@@ -112,25 +119,20 @@ struct ProfileView: View {
         ) { source in
             Button("Disconnect", role: .destructive) { disconnect(source) }
         } message: { _ in
-            Text("Bloom will stop using its busy times to find when you're free.")
+            Text("Bloom will stop using its busy times to find when you’re free.")
         }
         .sensoryFeedback(.success, trigger: googleCalendars) { old, new in old == 0 && new > 0 }
         .sensoryFeedback(.success, trigger: appleCalendarConnected) { _, new in new }
         .confirmationDialog("Log out of Bloom?", isPresented: $confirmingLogOut, titleVisibility: .visible) {
-            Button("Log out", role: .destructive) { onLogOut?() }
+            Button("Log Out", role: .destructive) { onLogOut?() }
         }
     }
 
     // MARK: - Header
 
     private var portrait: some View {
-        Button { choosingPhoto = true } label: {
-            photoFace
-                .overlay(alignment: .bottomTrailing) { photoPencil }
-        }
-        .buttonStyle(PressableButtonStyle())
-        .accessibilityLabel("Profile photo")
-        .accessibilityHint("Choose a new photo")
+        photoFace
+            .accessibilityLabel("Profile photo")
     }
 
     private var photoFace: some View {
@@ -141,6 +143,9 @@ struct ProfileView: View {
                     .scaledToFill()
                     .frame(width: photoSize, height: photoSize)
                     .clipShape(Circle())
+            } else if DemoCast.isJudge {
+                // No stand-in face in the judge's build: your initials until you pick a photo.
+                ContactAvatar(contact: KithContact(name: name, face: DemoCast.initials(name, .mint)), diameter: photoSize)
             } else {
                 ContactAvatar(contact: KithContact(name: name, face: .photo(Self.photo)), diameter: photoSize)
             }
@@ -157,67 +162,103 @@ struct ProfileView: View {
         }
     }
 
-    /// A pencil on the photo's lower right, on the circle's edge, so it reads
-    /// as "change this".
-    private var photoPencil: some View {
-        Image("PencilIcon")
-            .renderingMode(.template)
-            .resizable()
-            .frame(width: 16, height: 16)
+    private var nameRow: some View {
+        Text(name)
+            .font(.kithHeading)
             .foregroundStyle(ink)
-            .frame(width: 36, height: 36)
-            .background(KithTheme.canvas(isDark), in: Circle())
-            .overlay(Circle().strokeBorder(KithTheme.uiFill(isDark), lineWidth: 1.5))
-            // On the circle's edge at about 4:30.
-            .offset(x: -photoSize * 0.146 + 18, y: -photoSize * 0.146 + 18)
-            .accessibilityHidden(true)
+            .lineLimit(1)
+            .minimumScaleFactor(0.7)
+            .frame(minHeight: 44)
+            .accessibilityAddTraits(.isHeader)
     }
 
-    private var nameRow: some View {
-        HStack(spacing: 6) {
-            if editingName {
+    private var editButton: some View {
+        Button(action: beginEditingProfile) {
+            Text("Edit")
+                .font(.kithCaptionStrong)
+                .kithCapCentered(13, relativeTo: .footnote)
+                .foregroundStyle(secondary)
+                .padding(.horizontal, 18)
+                .frame(height: 32)
+                .background(KithTheme.uiFill(isDark), in: Capsule())
+                .frame(minHeight: 44)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(PressableButtonStyle())
+        .accessibilityLabel("Edit profile")
+    }
+
+    /// Name and photo together, so neither needs a pencil of its own and the
+    /// page doesn't reflow underneath you while you type.
+    private var profileEditor: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            Text("Edit profile")
+                .font(.kithHeading)
+                .foregroundStyle(ink)
+                .accessibilityAddTraits(.isHeader)
+
+            VStack(alignment: .leading, spacing: 6) {
+                Text("Name")
+                    .font(.kithCaption)
+                    .foregroundStyle(secondary)
+
                 TextField("Your name", text: $draftName)
-                    .font(.kithHeading)
+                    .font(.kithBody)
                     .foregroundStyle(ink)
                     .tint(ink)
-                    .multilineTextAlignment(.center)
                     .textContentType(.givenName)
                     .submitLabel(.done)
-                    .focused($nameFocused)
-                    .onSubmit(saveName)
-                    .frame(maxWidth: 260 * scale)
-            } else {
-                Text(name)
-                    .font(.kithHeading)
-                    .foregroundStyle(ink)
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.7)
-                    .accessibilityAddTraits(.isHeader)
-
-                Menu {
-                    Button("Choose photo…", systemImage: "photo") { choosingPhoto = true }
-                    Button("Edit name", systemImage: "character.cursor.ibeam", action: startEditingName)
-                    if customPhoto != nil {
-                        Button("Remove photo", systemImage: "trash", role: .destructive) { usePhoto(nil) }
-                    }
-                } label: {
-                    Image("PencilIcon")
-                        .renderingMode(.template)
-                        .resizable()
-                        .frame(width: 16, height: 16)
-                        .foregroundStyle(ink)
-                        // A 44pt target without moving the pencil off the name.
-                        .padding(14)
-                        .contentShape(Rectangle())
-                        .padding(-14)
-                }
-                .buttonStyle(PressableButtonStyle())
-                .accessibilityLabel("Edit profile")
+                    .onSubmit(saveProfile)
+                    .padding(.horizontal, 14)
+                    .frame(height: 44)
+                    .background(KithTheme.uiFill(isDark), in: Capsule())
+                    .accessibilityLabel("Your name")
             }
+
+            HStack(spacing: 10) {
+                editorAction("Choose photo") { choosingPhoto = true }
+                if customPhoto != nil {
+                    editorAction("Remove Photo") { usePhoto(nil) }
+                }
+            }
+
+            Button(action: saveProfile) {
+                Text("Save")
+                    .font(.kithBody)
+                    .kithCapCentered(17, relativeTo: .body)
+                    .foregroundStyle(KithTheme.canvas(isDark))
+                    .frame(maxWidth: .infinity)
+                    .frame(height: 44)
+                    .background(ink, in: Capsule())
+            }
+            .buttonStyle(PressableButtonStyle())
+            .padding(.top, 4)
+
+            Spacer(minLength: 0)
         }
-        .onChange(of: nameFocused) { _, focused in
-            if !focused { saveName() }
+        .padding(20)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(KithTheme.canvas(isDark).ignoresSafeArea())
+        .presentationDetents([.height(360)])
+        .presentationDragIndicator(.visible)
+        .photosPicker(isPresented: $choosingPhoto, selection: $pickedPhoto, matching: .images)
+        .onChange(of: pickedPhoto) { _, item in
+            guard let item else { return }
+            Task { await usePhoto(item) }
         }
+    }
+
+    private func editorAction(_ title: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Text(title)
+                .font(.kithCaption)
+                .kithCapCentered(13, relativeTo: .footnote)
+                .foregroundStyle(secondary)
+                .padding(.horizontal, 14)
+                .frame(height: 36)
+                .background(KithTheme.uiFill(isDark), in: Capsule())
+        }
+        .buttonStyle(PressableButtonStyle())
     }
 
     // MARK: - Settings
@@ -226,22 +267,22 @@ struct ProfileView: View {
         section("Notifications") {
             toggleRow(
                 icon: "SettingsBell",
-                title: "Push notifications",
+                title: "Push Notifications",
                 detail: "Let Bloom reach you on this phone",
                 isOn: $pushNotifications
             )
             separator
             toggleRow(
                 icon: "SettingsClock",
-                title: "Check-in reminders",
-                detail: "Gentle nudges when it's been a while",
+                title: "Check-In Reminders",
+                detail: "Gentle nudges when it’s been a while",
                 isOn: $reminders,
                 needsPush: true
             )
             separator
             toggleRow(
                 icon: "TabFriends",
-                title: "Friends nearby",
+                title: "Friends Nearby",
                 detail: "When someone you know is close by",
                 isOn: $friendsNearby,
                 needsPush: true
@@ -249,7 +290,7 @@ struct ProfileView: View {
             separator
             toggleRow(
                 icon: "TabRecaps",
-                title: "Weekly recaps",
+                title: "Weekly Recaps",
                 detail: "Summarize your time together",
                 isOn: $weeklyRecaps,
                 needsPush: true
@@ -263,10 +304,10 @@ struct ProfileView: View {
         section("Sharing") {
             toggleRow(
                 icon: "SettingsPin",
-                title: "Take a break",
+                title: "Take a Break",
                 detail: onBreak
-                    ? "You're on a break. Location sharing is off, friends can't see you or when you're free, and Bloom won't log hangouts or nudge you until you turn this off."
-                    : "Turns off location sharing, so friends won't see you or when you're free. Bloom stops logging hangouts and nudging you until you're back.",
+                    ? "You’re on a break. Location sharing is off, friends can’t see you or when you’re free, and Bloom won’t log hangouts or nudge you until you turn this off."
+                    : "Turns off location sharing, so friends won’t see you or when you’re free. Bloom stops logging hangouts and nudging you until you’re back.",
                 isOn: $onBreak.animation(.easeInOut(duration: 0.25))
             )
         }
@@ -445,11 +486,11 @@ struct ProfileView: View {
 
     private var footer: some View {
         VStack(spacing: 8) {
-            Text("bloom · gentle relationship awareness")
+            Text("Bloom · Gentle relationship awareness")
                 .font(.kithCaption)
                 .foregroundStyle(secondary)
 
-            Button("Privacy & terms") { /* TODO: privacy & terms page */ }
+            Button("Privacy & Terms") { /* TODO: privacy & terms page */ }
                 .font(.kithCaption)
                 .foregroundStyle(KithTheme.navActive)
         }
@@ -471,18 +512,15 @@ struct ProfileView: View {
         ProfilePhotoStore.save(image)
     }
 
-    private func startEditingName() {
+    private func beginEditingProfile() {
         draftName = name
-        editingName = true
-        nameFocused = true
+        editingProfile = true
     }
 
-    private func saveName() {
-        guard editingName else { return }
+    private func saveProfile() {
         let trimmed = draftName.trimmingCharacters(in: .whitespacesAndNewlines)
         if !trimmed.isEmpty { name = trimmed }
-        editingName = false
-        nameFocused = false
+        editingProfile = false
     }
 }
 

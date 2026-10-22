@@ -42,13 +42,15 @@ struct SystemAlertView: View {
 
             VStack(spacing: 0) {
                 VStack(spacing: 2) {
+                    // Text styles, not fixed sizes, so the stand-in grows with
+                    // the phone's text size the way the real alert does.
                     Text(alert.title)
-                        .font(.system(size: 17, weight: .semibold))
+                        .font(.headline)
                         .multilineTextAlignment(.center)
                         .fixedSize(horizontal: false, vertical: true)
 
                     Text(alert.message)
-                        .font(.system(size: 13))
+                        .font(.subheadline)
                         .multilineTextAlignment(.center)
                         .fixedSize(horizontal: false, vertical: true)
                         .padding(.top, 2)
@@ -65,16 +67,17 @@ struct SystemAlertView: View {
 
                     Button { onChoice(action) } label: {
                         Text(action.title)
-                            .font(.system(size: 17, weight: action.isPreferred ? .semibold : .regular))
+                            .font(.body.weight(action.isPreferred ? .semibold : .regular))
                             .foregroundStyle(systemBlue)
                             .frame(maxWidth: .infinity)
-                            .frame(height: 44)
+                            .frame(minHeight: 44)
+                            .padding(.vertical, 2)
                             .contentShape(Rectangle())
                     }
                     .buttonStyle(.plain)
                 }
             }
-            .frame(width: 270)
+            .frame(width: 290)
             .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
             .scaleEffect(shown ? 1 : 1.18)
             .opacity(shown ? 1 : 0)
@@ -88,7 +91,7 @@ struct SystemAlertView: View {
 
 extension SystemAlert {
     /// Apple's own wording and button order for each prompt: the affirmative
-    /// option on top, "Don't Allow" at the bottom.
+    /// option on top, "Don’t Allow" at the bottom.
     static func permission(for step: OnboardingStep) -> SystemAlert? {
         switch step {
         case .contacts:

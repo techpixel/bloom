@@ -145,7 +145,7 @@ struct RangeTabs: View {
                             .background(chosen ? KithTheme.secondary(isDark) : KithTheme.canvas(isDark), in: Capsule())
                     }
                     .frame(maxWidth: .infinity)
-                    .frame(height: 30)
+                    .frame(height: 38)
                     .background {
                         if chosen {
                             Capsule()
@@ -162,7 +162,7 @@ struct RangeTabs: View {
                 .accessibilityAddTraits(chosen ? [.isSelected, .isButton] : .isButton)
             }
         }
-        .frame(height: 30)
+        .frame(height: 38)
         .background(KithTheme.uiFill(isDark), in: Capsule())
         .sensoryFeedback(.selection, trigger: selection)
     }
@@ -296,7 +296,7 @@ private struct EntranceModifier: ViewModifier {
             .animation(
                 reduceMotion
                     ? .easeOut(duration: 0.3)
-                    : .easeOut(duration: 0.7).delay(Double(order) * 0.07),
+                    : .easeOut(duration: 0.55).delay(Double(order) * 0.12),
                 value: visible
             )
     }
@@ -306,5 +306,29 @@ extension View {
     /// Part of a staggered entrance. Flip `visible` once to play it.
     func entrance(_ order: Int, visible: Bool) -> some View {
         modifier(EntranceModifier(order: order, visible: visible))
+    }
+}
+
+// MARK: - Drawers
+
+extension View {
+    /// A page that slides up over the one you're on and swipes back down to
+    /// close: the friend page, their history, a hangout. The handle says it can.
+    func drawer<Content: View>(isPresented: Binding<Bool>, @ViewBuilder content: @escaping () -> Content) -> some View {
+        sheet(isPresented: isPresented) {
+            content().drawerStyle()
+        }
+    }
+
+    func drawer<Item: Identifiable, Content: View>(item: Binding<Item?>, @ViewBuilder content: @escaping (Item) -> Content) -> some View {
+        sheet(item: item) { value in
+            content(value).drawerStyle()
+        }
+    }
+
+    fileprivate func drawerStyle() -> some View {
+        presentationDragIndicator(.visible)
+            .presentationCornerRadius(28)
+            .presentationBackground(KithTheme.canvas(false))
     }
 }

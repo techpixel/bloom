@@ -72,7 +72,7 @@ struct WeekScheduleView: View {
                     Color.clear
                         .frame(height: size.height * (264 / designHeight))
                         .overlay(alignment: .bottom) {
-                            Text("Find a time that works")
+                            Text("Find a Time That Works")
                                 .font(.kithHeading)
                                 .foregroundStyle(ink)
                                 .multilineTextAlignment(.center)
@@ -223,7 +223,7 @@ struct WeekScheduleView: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .accessibilityElement(children: .contain)
-        .accessibilityLabel("Activity suggestions")
+        .accessibilityLabel("Activity Suggestions")
     }
 
     private func suggestionCard(_ suggestion: ActivitySuggestion) -> some View {
@@ -350,7 +350,7 @@ extension ActivitySuggestion {
         ActivitySuggestion(
             id: 0,
             title: "Eleventh House West Lafayette",
-            detail: "You seemed to enjoy your time with Manitej here."
+            detail: "You seemed to enjoy your time with \(DemoCast.isJudge ? "Nora" : "Manitej") here."
         ),
         ActivitySuggestion(
             id: 1,

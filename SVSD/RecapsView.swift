@@ -34,7 +34,7 @@ enum RecapPeriod: String, CaseIterable, Identifiable {
             }
             let end = calendar.date(byAdding: .day, value: -1, to: week.end) ?? week.end
             let day = { (date: Date) in calendar.component(.day, from: date) }
-            return "\(month.string(from: week.start).uppercased()) \(day(week.start))-\(day(end))"
+            return "\(month.string(from: week.start).uppercased()) \(day(week.start))–\(day(end))"
         }
     }
 }
@@ -68,6 +68,13 @@ struct RecapsView: View {
     @State private var appeared = RecapsView.hasAppeared
     @State private var openFriend: KithContact?
     @State private var openHangout: RecentHangout.ID?
+    /// How far you've dragged the cluster to look around it.
+    @State private var pan: CGSize = .zero
+    @GestureState private var dragging: CGSize = .zero
+    /// The float's own clock: frozen while you drag, shifted by however long
+    /// that took, so letting go doesn't snap the bubbles forward.
+    @State private var floatShift: Double = 0
+    @State private var frozenAt: Double?
     private static var hasAppeared = false
 
     private var isDark: Bool { colorScheme == .dark }
@@ -78,7 +85,7 @@ struct RecapsView: View {
     /// "Highlights" lands where each comp puts it.
     private static let clusterTop: CGFloat = 140
     private func clusterHeight(_ period: RecapPeriod) -> CGFloat {
-        period == .week ? 322 : 446
+        period == .week ? 322 : 470
     }
 
     var body: some View {
@@ -97,6 +104,7 @@ struct RecapsView: View {
 
                     highlights
                         .padding(.horizontal, 20)
+                        .padding(.top, 28)
                 }
                 .padding(.bottom, 28)
             }
@@ -108,11 +116,11 @@ struct RecapsView: View {
             appeared = true
             Self.hasAppeared = true
         }
-        .fullScreenCover(item: $openFriend) { friend in
+        .drawer(item: $openFriend) { friend in
             FriendRecapView(contact: friend, onBack: { openFriend = nil })
                 .environment(store)
         }
-        .fullScreenCover(isPresented: Binding(get: { openHangout != nil }, set: { if !$0 { openHangout = nil } })) {
+        .drawer(isPresented: Binding(get: { openHangout != nil }, set: { if !$0 { openHangout = nil } })) {
             if let index = store.hangouts.firstIndex(where: { $0.id == openHangout }) {
                 MeetupDetailView(hangout: Bindable(store).hangouts[index]) { openHangout = nil }
             }
@@ -157,16 +165,80 @@ struct RecapsView: View {
     private var cluster: some View {
         let bubbles = Self.bubbles
 
-        return TimelineView(.animation(minimumInterval: 1 / 30, paused: reduceMotion)) { timeline in
-            let time = reduceMotion ? 0 : timeline.date.timeIntervalSinceReferenceDate
+        return TimelineView(.animation(minimumInterval: 1 / 60, paused: reduceMotion)) { timeline in
+            let time = reduceMotion ? 0 : (frozenAt ?? (timeline.date.timeIntervalSinceReferenceDate - floatShift))
             ZStack(alignment: .topLeading) {
                 ForEach(Array(bubbles.enumerated()), id: \.element.id) { index, bubble in
                     bubbleView(bubble, index: index, time: time)
                 }
             }
+            .offset(currentPan)
         }
         .frame(width: screenWidth, height: clusterHeight(period) * scale, alignment: .topLeading)
         .clipped()
+        .contentShape(Rectangle())
+        .gesture(panGesture)
+        .onChange(of: period) {
+            withAnimation(reduceMotion ? nil : .spring(response: 0.55, dampingFraction: 0.85)) { pan = .zero }
+        }
+    }
+
+    private var currentPan: CGSize {
+        let raw = CGSize(width: pan.width + dragging.width, height: pan.height + dragging.height)
+        let range = panRange
+        return CGSize(width: rubberBand(raw.width, range.x), height: rubberBand(raw.height, range.y))
+    }
+
+    /// Drag the cluster to look around it. It gives a little past the edges
+    /// of what's there, and settles back inside when you let go.
+    private var panGesture: some Gesture {
+        DragGesture(minimumDistance: 4)
+            .updating($dragging) { value, state, _ in state = value.translation }
+            .onChanged { _ in
+                if frozenAt == nil {
+                    frozenAt = Date().timeIntervalSinceReferenceDate - floatShift
+                }
+            }
+            .onEnded { value in
+                if let frozen = frozenAt {
+                    floatShift = Date().timeIntervalSinceReferenceDate - frozen
+                    frozenAt = nil
+                }
+                let range = panRange
+                let thrown = CGSize(
+                    width: pan.width + value.translation.width + (value.predictedEndTranslation.width - value.translation.width) * 0.35,
+                    height: pan.height + value.translation.height + (value.predictedEndTranslation.height - value.translation.height) * 0.35
+                )
+                withAnimation(reduceMotion ? nil : .spring(response: 0.5, dampingFraction: 0.86)) {
+                    pan = CGSize(
+                        width: min(max(thrown.width, range.x.lowerBound), range.x.upperBound),
+                        height: min(max(thrown.height, range.y.lowerBound), range.y.upperBound)
+                    )
+                }
+            }
+    }
+
+    /// How far the cluster can travel each way: enough to bring the outermost
+    /// friend fully on screen, and no further.
+    private var panRange: (x: ClosedRange<CGFloat>, y: ClosedRange<CGFloat>) {
+        let spots = Self.bubbles.compactMap { $0.spots[period] }
+        guard !spots.isEmpty else { return (0...0, 0...0) }
+        let margin: CGFloat = 16
+        let left = spots.map { ($0.center.x - $0.diameter / 2) * scale }.min()!
+        let right = spots.map { ($0.center.x + $0.diameter / 2) * scale }.max()!
+        let top = spots.map { ($0.center.y - Self.clusterTop - $0.diameter / 2) * scale }.min()!
+        let bottom = spots.map { ($0.center.y - Self.clusterTop + $0.diameter / 2 + 14) * scale }.max()!
+        let width = screenWidth, height = clusterHeight(period) * scale
+        let x = min(0, width - margin - right)...max(0, margin - left)
+        let y = min(0, height - margin - bottom)...max(0, margin - top)
+        return (x, y)
+    }
+
+    /// Past the range the drag moves a third as far, so the edge is felt.
+    private func rubberBand(_ value: CGFloat, _ range: ClosedRange<CGFloat>) -> CGFloat {
+        if value < range.lowerBound { return range.lowerBound + (value - range.lowerBound) / 3 }
+        if value > range.upperBound { return range.upperBound + (value - range.upperBound) / 3 }
+        return value
     }
 
     @ViewBuilder
@@ -181,7 +253,7 @@ struct RecapsView: View {
         Button { openFriend = bubble.contact } label: {
             ContactAvatar(contact: bubble.contact, diameter: diameter)
                 .overlay(alignment: .bottom) {
-                    if let times = countShown(bubble), labelFits(centerX: center.x) {
+                    if let times = countShown(bubble), labelFits(centerX: center.x + currentPan.width) {
                         Text(times == 1 ? "1 time" : "\(times) times")
                             .font(.kithCaptionStrong)
                             .contentTransition(.numericText(value: Double(times)))
@@ -280,7 +352,7 @@ struct RecapsView: View {
 // MARK: - A friend's recap
 
 /// One friend's overview (comp 136:2412): their face in its glow, your latest
-/// time together, everything else behind "See more", and the photos from all
+/// time together, everything else behind "See More", and the photos from all
 /// of it.
 struct FriendRecapView: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -295,6 +367,8 @@ struct FriendRecapView: View {
     @State private var showingHistory = false
     @State private var addingPhoto = false
     @State private var pickedPhoto: PhotosPickerItem?
+    /// The photo open full size in the carousel, if any.
+    @State private var viewingPhoto: Int?
 
     private var isDark: Bool { colorScheme == .dark }
     private var ink: Color { KithTheme.ink(isDark) }
@@ -303,7 +377,10 @@ struct FriendRecapView: View {
 
     var body: some View {
         let theirs = store.hangouts.filter { $0.contact.name == contact.name }
-        let photos = theirs.flatMap(\.photos)
+        // Every hangout draws from the same pool, so the friend's gallery would
+        // otherwise show the same place three or four times over.
+        var seenPhotos: Set<String> = []
+        let photos = theirs.flatMap(\.photos).filter { seenPhotos.insert($0.id).inserted }
 
         ZStack(alignment: .topLeading) {
             KithTheme.canvas(isDark).ignoresSafeArea()
@@ -367,12 +444,18 @@ struct FriendRecapView: View {
                 .padding(.top, 29 * scale)
         }
         .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { screenWidth = $0 }
-        .fullScreenCover(isPresented: Binding(get: { openHangout != nil }, set: { if !$0 { openHangout = nil } })) {
+        .fullScreenCover(isPresented: Binding(get: { viewingPhoto != nil }, set: { if !$0 { viewingPhoto = nil } })) {
+            PhotoCarousel(
+                photos: store.hangouts.filter { $0.contact.name == contact.name }.flatMap(\.photos),
+                index: viewingPhoto ?? 0
+            ) { viewingPhoto = nil }
+        }
+        .drawer(isPresented: Binding(get: { openHangout != nil }, set: { if !$0 { openHangout = nil } })) {
             if let index = store.hangouts.firstIndex(where: { $0.id == openHangout }) {
                 MeetupDetailView(hangout: Bindable(store).hangouts[index]) { openHangout = nil }
             }
         }
-        .fullScreenCover(isPresented: $showingHistory) {
+        .drawer(isPresented: $showingHistory) {
             FriendHistoryView(contact: contact) { showingHistory = false }
         }
         .photosPicker(isPresented: $addingPhoto, selection: $pickedPhoto, matching: .images)
@@ -413,7 +496,7 @@ struct FriendRecapView: View {
                         .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
-                .accessibilityHint("Opens every time you've spent with \(contact.firstName)")
+                .accessibilityHint("Opens every time you’ve spent with \(contact.firstName)")
             }
         }
     }
@@ -422,27 +505,16 @@ struct FriendRecapView: View {
     private func latestCard(_ hangout: RecentHangout) -> some View {
         let feelings = Feeling.allCases.filter(hangout.feelings.contains)
 
-        return HStack(spacing: 12) {
-            Group {
-                if let photo = hangout.photos.first {
-                    photo.image
-                        .resizable()
-                        .scaledToFill()
-                } else {
-                    KithTheme.suggestionCard(isDark)
-                        .overlay(ContactAvatar(contact: hangout.contact, diameter: 56))
-                }
-            }
-            .frame(width: 85, height: 85)
-            .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
-            .accessibilityHidden(true)
+        // The photo runs the card's full height, however much the text beside
+        // it takes, so the two always line up.
+        let thumbnail: CGFloat = 92
 
-            VStack(alignment: .leading, spacing: 12) {
+        return VStack(alignment: .leading, spacing: 12) {
                 VStack(alignment: .leading, spacing: 6) {
                     HStack(spacing: 3) {
                         if feelings.isEmpty {
                             FeelingTag(
-                                "Needs reflection",
+                                "Needs Reflection",
                                 fill: KithTheme.canvas(isDark),
                                 text: secondary
                             )
@@ -465,7 +537,7 @@ struct FriendRecapView: View {
                 }
 
                 Button { openHangout = hangout.id } label: {
-                    Text("View your time together")
+                    Text("View Your Time Together")
                         .font(.kithCaption)
                         .kithCapCentered(13, relativeTo: .footnote)
                         .foregroundStyle(KithTheme.canvas(isDark))
@@ -479,12 +551,29 @@ struct FriendRecapView: View {
                 .padding(.vertical, -7.5)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
-        }
+            .padding(.leading, thumbnail + 12)
+            .frame(minHeight: thumbnail)
+            .overlay(alignment: .leading) {
+                Group {
+                    if let photo = hangout.photos.first {
+                        photo.image
+                            .resizable()
+                            .scaledToFill()
+                    } else {
+                        KithTheme.suggestionCard(isDark)
+                            .overlay(ContactAvatar(contact: hangout.contact, diameter: 56))
+                    }
+                }
+                .frame(width: thumbnail)
+                .frame(maxHeight: .infinity)
+                .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+                .accessibilityHidden(true)
+            }
         .padding(12)
         .background(KithTheme.uiFill(isDark), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
     }
 
-    /// "Studying with Manitej" reads "Studying at 9am" on Manitej's own page.
+    /// "Studying with Manitej" reads "Studying at 9 AM" on Manitej's own page.
     private static func shortTitle(_ hangout: RecentHangout) -> String {
         let activity = hangout.title.components(separatedBy: " with ").first ?? hangout.title
         return "\(activity) at \(hangout.startTime)"
@@ -504,13 +593,19 @@ struct FriendRecapView: View {
                 .accessibilityAddTraits(.isHeader)
 
             LazyVGrid(columns: Array(repeating: GridItem(.fixed(side), spacing: 10), count: 3), spacing: 10) {
-                ForEach(Array(photos.enumerated()), id: \.offset) { _, photo in
-                    photo.image
-                        .resizable()
-                        .scaledToFill()
-                        .frame(width: side, height: side)
-                        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-                        .accessibilityHidden(true)
+                ForEach(Array(photos.enumerated()), id: \.offset) { offset, photo in
+                    // Opens the whole set big, starting on this one.
+                    Button { viewingPhoto = offset } label: {
+                        photo.image
+                            .resizable()
+                            .scaledToFill()
+                            .frame(width: side, height: side)
+                            .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                            .contentShape(Rectangle())
+                    }
+                    .buttonStyle(PressableButtonStyle())
+                    .accessibilityLabel("Photo \(offset + 1) of \(photos.count)")
+                    .accessibilityHint("Opens it full size")
                 }
 
                 addPhotoTile(side: side)
@@ -532,7 +627,7 @@ struct FriendRecapView: View {
                 }
         }
         .buttonStyle(PressableButtonStyle())
-        .accessibilityLabel("Add a photo")
+        .accessibilityLabel("Add a Photo")
     }
 }
 
@@ -559,7 +654,7 @@ struct HangoutRow: View {
                     HStack(spacing: 3) {
                         if feelings.isEmpty {
                             FeelingTag(
-                                "Needs reflection",
+                                "Needs Reflection",
                                 fill: KithTheme.canvas(isDark),
                                 text: KithTheme.secondary(isDark)
                             )
@@ -580,13 +675,13 @@ struct HangoutRow: View {
                             .lineSpacing(3)
                             .fixedSize(horizontal: false, vertical: true)
                     }
-                    .padding(.horizontal, 2)
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
 
                 Image(systemName: "chevron.right")
-                    .font(.system(size: 12, weight: .semibold))
+                    .font(.system(size: 16, weight: .semibold))
                     .foregroundStyle(KithTheme.secondary(isDark))
+                    .padding(.trailing, 4)
             }
             .padding(12)
             .background(KithTheme.uiFill(isDark), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
@@ -617,6 +712,8 @@ struct FeelingTag: View {
             .kithCapCentered(12, relativeTo: .caption)
             .foregroundStyle(text ?? KithTheme.ink(false))
             .lineLimit(1)
+            // Never squeezed into "Energiz…" by a tight row; the row wraps instead.
+            .fixedSize()
             .padding(.horizontal, 9.6)
             .frame(height: 24)
             .background(fill, in: Capsule())
@@ -625,7 +722,7 @@ struct FeelingTag: View {
 
 /// Your own photo, as Profile shows it: the one you picked, or the comp's.
 struct YourAvatar: View {
-    @AppStorage("profile.name") private var name = "Amber"
+    @AppStorage("profile.name") private var name = DemoCast.placeholderName
     var diameter: CGFloat
 
     var body: some View {
@@ -635,6 +732,8 @@ struct YourAvatar: View {
                 .scaledToFill()
                 .frame(width: diameter, height: diameter)
                 .clipShape(Circle())
+        } else if DemoCast.isJudge {
+            ContactAvatar(contact: KithContact(name: name, face: DemoCast.initials(name, .mint)), diameter: diameter)
         } else {
             ContactAvatar(
                 contact: KithContact(
@@ -689,9 +788,16 @@ private extension RecapsView {
     /// Measured off the comps: centre and diameter in the 393pt frame.
     static let bubbles: [RecapBubble] = {
         let friend = { (key: String) in RecentHangout.recapFriends[key]! }
+        return radiating(listed(friend))
+    }()
+
+    /// The comp's people and counts. Week keeps the comp's own placement;
+    /// Month is laid out by `radiating`.
+    private static func listed(_ friend: (String) -> KithContact) -> [RecapBubble] {
         func spot(_ x: CGFloat, _ y: CGFloat, _ d: CGFloat) -> (center: CGPoint, diameter: CGFloat) {
             (CGPoint(x: x, y: y), d)
         }
+        if DemoCast.isJudge { return judgeListed(spot) }
         return [
             RecapBubble(contact: manitej, spots: [.week: spot(187, 281, 152), .month: spot(180, 362, 152)], times: [.week: 5, .month: 12], tilt: -2),
             RecapBubble(contact: ishan, spots: [.week: spot(301, 213, 101), .month: spot(103, 221, 101)], times: [.week: 4, .month: 8], tilt: -3),
@@ -706,6 +812,82 @@ private extension RecapsView {
             RecapBubble(contact: friend("Sofia"), spots: [.month: spot(-3.5, 385.5, 53)], times: [.month: 2], tilt: -3),
             RecapBubble(contact: friend("Priya"), spots: [.month: spot(-12, 242, 84)], times: [.month: 5], tilt: 2),
             RecapBubble(contact: friend("Sam"), spots: [.month: spot(399.5, 428.5, 79)], times: [.month: 4], tilt: -4)
-        ]
-    }()
+        ] + ringBubbles(spot)
+    }
+
+    /// The outer ring: people you saw once or twice this month, on their own
+    /// colour since they have no photo here.
+    private static func ringBubbles(_ spot: (CGFloat, CGFloat, CGFloat) -> (center: CGPoint, diameter: CGFloat)) -> [RecapBubble] {
+        outerRing.enumerated().map { index, person in
+            RecapBubble(
+                contact: KithContact(name: person.name, face: DemoCast.initials(person.name, FriendBlob.forName(person.name))),
+                spots: [.month: spot(0, 0, 0)],
+                times: [.month: person.times],
+                tilt: index.isMultiple(of: 2) ? 3 : -3
+            )
+        }
+    }
+
+    /// The judge's build: Nora and Leo, with a few people you saw once this
+    /// week, and the same outer ring for the month.
+    private static func judgeListed(_ spot: (CGFloat, CGFloat, CGFloat) -> (center: CGPoint, diameter: CGFloat)) -> [RecapBubble] {
+        let weekSpots = [spot(96, 214, 62), spot(86, 352, 58), spot(292, 380, 64)]
+        let ring = ringBubbles(spot).enumerated().map { index, bubble in
+            var bubble = bubble
+            if index < weekSpots.count {
+                bubble.spots[.week] = weekSpots[index]
+                bubble.times[.week] = 1
+            }
+            return bubble
+        }
+        return [
+            RecapBubble(contact: DemoCast.nora, spots: [.week: spot(190, 285, 148), .month: spot(0, 0, 0)], times: [.week: 3, .month: 9], tilt: -2),
+            RecapBubble(contact: DemoCast.leo, spots: [.week: spot(298, 214, 106), .month: spot(0, 0, 0)], times: [.week: 2, .month: 6], tilt: 3)
+        ] + ring
+    }
+
+    private static let outerRing: [(name: String, times: Int)] = [
+        ("Aanya Iyer", 2), ("Ben Walsh", 1), ("Camila Diaz", 2), ("Felix Brooks", 1),
+        ("Grace Kim", 2), ("Hiro Tanaka", 1), ("Isla Evans", 1), ("Jonah Park", 2),
+        ("Maya Gupta", 1), ("Quinn Ferreira", 1), ("Rosa Mehta", 2), ("Wes Nguyen", 1)
+    ]
+
+    /// Month as one big circle radiating out from the middle: the friend you
+    /// saw most at the centre, everyone else sized by how often and placed
+    /// outward in that order, each in the first gap on a golden-angle spiral.
+    /// It runs past the screen's edges; you pan around it.
+    private static func radiating(_ bubbles: [RecapBubble]) -> [RecapBubble] {
+        let center = CGPoint(x: 196.5, y: clusterTop + 223)
+        let gap: CGFloat = 8
+        var placed: [(center: CGPoint, diameter: CGFloat)] = []
+        var result = bubbles
+        let order = bubbles.indices.sorted { (bubbles[$0].times[.month] ?? 0) > (bubbles[$1].times[.month] ?? 0) }
+
+        for (rank, index) in order.enumerated() {
+            guard let count = bubbles[index].times[.month] else { continue }
+            let diameter = min(152, max(54, 44 + 9 * CGFloat(count)))
+            var spot = center
+            if rank > 0 {
+                var distance = (placed[0].diameter + diameter) / 2 + gap
+                let start = CGFloat(rank) * 2.39996
+                search: while true {
+                    for step in 0..<36 {
+                        let angle = start + CGFloat(step) * (.pi / 18)
+                        let candidate = CGPoint(x: center.x + distance * cos(angle), y: center.y + distance * sin(angle) * 0.92)
+                        let clear = placed.allSatisfy { other in
+                            hypot(candidate.x - other.center.x, candidate.y - other.center.y) >= (other.diameter + diameter) / 2 + gap
+                        }
+                        if clear {
+                            spot = candidate
+                            break search
+                        }
+                    }
+                    distance += 4
+                }
+            }
+            placed.append((spot, diameter))
+            result[index].spots[.month] = (spot, diameter)
+        }
+        return result
+    }
 }

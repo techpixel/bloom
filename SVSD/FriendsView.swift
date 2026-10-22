@@ -87,6 +87,9 @@ struct FriendsView: View {
     #else
     @State private var planning: KithContact?
     #endif
+    @State private var requestArrived = false
+    @State private var requestPing = 0
+
     /// The friend whose overview is open, from tapping them on the dial.
     @State private var overview: KithContact?
     @Environment(HangoutStore.self) private var store
@@ -123,35 +126,47 @@ struct FriendsView: View {
     /// true middle with as many turns available either way.
     private static let dialLaps = 101
 
+    /// The dial loops only with enough friends to fill it; two or three would
+    /// show the same face twice at once.
+    private var loops: Bool { visibleCircle.count > 3 }
+
     private var dialSlots: [Int] {
-        visibleCircle.count > 1 ? Array(0..<(visibleCircle.count * Self.dialLaps)) : Array(visibleCircle.indices)
+        loops ? Array(0..<(visibleCircle.count * Self.dialLaps)) : Array(visibleCircle.indices)
     }
 
     /// The slot holding `index` in the middle lap.
     private func middleSlot(for index: Int) -> Int {
-        visibleCircle.count > 1 ? visibleCircle.count * (Self.dialLaps / 2) + index : index
+        loops ? visibleCircle.count * (Self.dialLaps / 2) + index : index
     }
 
     private var centeredFriend: KithContact? {
         guard let slot = centeredSlot, !visibleCircle.isEmpty else { return nil }
         return visibleCircle[slot % visibleCircle.count]
     }
-    private var visibleRequests: [FriendRequest] { requests.filter { matchesSearch($0.contact) } }
+    /// Requests arrive a second after you land here, as if one just came in,
+    /// so a demo on someone else's phone gets to see it happen.
+    private var visibleRequests: [FriendRequest] {
+        requestArrived ? requests.filter { matchesSearch($0.contact) } : []
+    }
     private var visibleSuggestions: [FriendSuggestion] { suggestions.filter { matchesSearch($0.contact) } }
 
     var body: some View {
-        ScrollView {
+        // The title, search and your circle stay put; only the lists under
+        // them scroll.
+        VStack(alignment: .leading, spacing: 0) {
+            header
+                .padding(.horizontal, gutter)
+                .padding(.top, 24 * scale)
+
+            if !visibleCircle.isEmpty {
+                dial
+                    .padding(.top, 27 * scale)
+            }
+
+            ScrollView {
             VStack(alignment: .leading, spacing: 0) {
-                header
-                    .padding(.horizontal, gutter)
-
-                if !visibleCircle.isEmpty {
-                    dial
-                        .padding(.top, 27 * scale)
-                }
-
                 if !visibleRequests.isEmpty {
-                    section("Friend requests") {
+                    section("Friend Requests") {
                         VStack(spacing: 16) {
                             ForEach(visibleRequests) { requestRow($0) }
                         }
@@ -159,10 +174,14 @@ struct FriendsView: View {
                         .background(card, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
                     }
                     .padding(.top, 40 * scale)
+                    .transition(.asymmetric(
+                        insertion: .scale(scale: 0.92, anchor: .top).combined(with: .opacity),
+                        removal: .opacity
+                    ))
                 }
 
                 if !visibleSuggestions.isEmpty {
-                    section("People you might know") {
+                    section("People You Might Know") {
                         LazyVStack(spacing: 12) {
                             ForEach(visibleSuggestions) { suggestion in
                                 suggestionRow(suggestion)
@@ -185,10 +204,19 @@ struct FriendsView: View {
                         .padding(.top, 24)
                 }
             }
-            .padding(.top, 24 * scale)
             // Clear the floating tab bar, so the last row isn't under its glass.
             .padding(.bottom, 96)
+            }
+            // A soft edge where the lists slide under your circle.
+            .mask {
+                VStack(spacing: 0) {
+                    LinearGradient(colors: [.clear, .black], startPoint: .top, endPoint: .bottom)
+                        .frame(height: 14)
+                    Rectangle()
+                }
+            }
         }
+        .frame(maxHeight: .infinity, alignment: .top)
         .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { screenWidth = $0 }
         .scrollDismissesKeyboard(.immediately)
         .sensoryFeedback(.success, trigger: accepted)
@@ -199,7 +227,16 @@ struct FriendsView: View {
         .fullScreenCover(item: $planning) { _ in
             PlanFlowView(onBack: { planning = nil })
         }
-        .fullScreenCover(item: $overview) { friend in
+        .task {
+            guard !requestArrived else { return }
+            try? await Task.sleep(for: .seconds(1))
+            withAnimation(reduceMotion ? .easeOut(duration: 0.2) : .spring(response: 0.5, dampingFraction: 0.72)) {
+                requestArrived = true
+            }
+            requestPing += 1
+        }
+        .sensoryFeedback(.impact(weight: .light), trigger: requestPing)
+        .drawer(item: $overview) { friend in
             FriendRecapView(contact: friend, onBack: { overview = nil })
                 .environment(store)
         }
@@ -225,7 +262,7 @@ struct FriendsView: View {
                     ShareLink(
                         item: URL(string: "https://bloom.app/add/\(Self.inviteHandle)")!,
                         subject: Text("Add me on Bloom"),
-                        message: Text("I'm on Bloom, an app for spending more real time with friends. Add me:")
+                        message: Text("I’m on Bloom, an app for spending more real time with friends. Add me:")
                     ) {
                         roundIcon("ShareIcon")
                     }
@@ -635,7 +672,7 @@ struct ContactAvatar: View {
 
 extension KithContact {
     /// Your circle, framed the way the comp crops each photo.
-    static let circleSample: [KithContact] = [
+    static let circleSample: [KithContact] = DemoCast.isJudge ? DemoCast.circle : [
         KithContact(
             name: "Manitej Boorgu",
             face: .photo(Portrait(asset: "FriendAvatar", width: 2.5919, height: 1.7318, x: 0.1038, y: -0.0007)),
@@ -698,11 +735,11 @@ enum SamplePeople {
 }
 
 extension FriendRequest {
-    static let sample = [
+    static let sample = DemoCast.isJudge ? DemoCast.requests : [
         FriendRequest(
             contact: KithContact(name: "Michelle Xuan", face: .photo(Portrait(asset: "AvatarMichelle", height: 2))),
             connection: .friendsWith("Ishan", andOthers: true),
-            received: .now.addingTimeInterval(-5 * 60 * 60)
+            received: .now.addingTimeInterval(-60)
         )
     ]
 }
@@ -713,7 +750,10 @@ extension FriendSuggestion {
     private static let slate = Color(red: 0.580, green: 0.580, blue: 0.580)  // #949494
     private static let nearBlack = Color(red: 0.067, green: 0.067, blue: 0.067) // #111111
 
-    static let sample = [
+    /// The judge's build leaves out the comps' real people and the second Leo.
+    static let sample = comps.filter { !DemoCast.isJudge || !["Jadden Picardal", "Leo Chen"].contains($0.contact.name) }
+
+    private static let comps = [
         FriendSuggestion(
             contact: KithContact(name: "Jadden Picardal", face: .photo(Portrait(asset: "AvatarJadden"))),
             connection: .friendsWith("Ishan")
@@ -749,7 +789,7 @@ extension FriendSuggestion {
         let end = min(start + size, SamplePeople.count)
         guard start < end else { return [] }
 
-        let mutuals = ["Ishan", "Manitej", "Ray"]
+        let mutuals = DemoCast.isJudge ? DemoCast.mutuals : ["Ishan", "Manitej", "Ray"]
         return (start..<end).map { index in
             let connection: Connection?
             switch index % 4 {

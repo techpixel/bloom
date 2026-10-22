@@ -1,0 +1,138 @@
+import SwiftUI
+
+/// Who's in the app. The everyday build uses the comps' people. The judge's
+/// build (compiled with `JUDGE_DEMO`) swaps in two made-up friends, Nora and
+/// Leo, so no real person's name or photo ships in it; everyone else in it
+/// is made up too.
+enum DemoCast {
+    #if JUDGE_DEMO
+    static let isJudge = true
+    #else
+    static let isJudge = false
+    #endif
+
+    /// The name and email the app assumes before you've typed your own.
+    static var placeholderName: String { isJudge ? "You" : "Amber" }
+
+    // MARK: - The two friends
+
+    static let nora = KithContact(name: "Nora Patel", face: initials("Nora Patel", .rose))
+    static let leo = KithContact(name: "Leo Ortiz", face: initials("Leo Ortiz", .sky))
+
+    /// Initials on one of the blob colours, the app's face for someone without a photo.
+    static func initials(_ name: String, _ blob: FriendBlob) -> KithContact.Face {
+        let letters = name.split(separator: " ").compactMap(\.first).map(String.init).joined()
+        return .initials(letters, background: blob.color, ink: KithTheme.ink(false))
+    }
+
+    // MARK: - Home
+
+    static let nudges: [TodayNudge] = [
+        TodayNudge(
+            contact: nora,
+            seen: "You saw them at Vienna Cafe yesterday.",
+            free: [
+                .today: "You’re both free at 4:00 PM.",
+                .thisWeek: "You’re both free Wednesday at 4:00 PM."
+            ],
+            idea: "grab a coffee?"
+        ),
+        TodayNudge(
+            contact: leo,
+            seen: "You saw them at the climbing gym on Sunday.",
+            free: [
+                .today: "You’re both free at 7:30 PM.",
+                .tomorrow: "You’re both free at 6:00 PM.",
+                .thisWeek: "You’re both free Friday evening."
+            ],
+            idea: "split a plate of fries?"
+        )
+    ]
+
+    /// Your history with them. The newest is the one Home asks about; the
+    /// counts line up with Recaps (Nora 3 this week and 9 this month, Leo 2 and 6).
+    static let hangouts: [RecentHangout] = {
+        var hangouts = [
+            RecentHangout(
+                contact: nora,
+                title: "Coffee with Nora",
+                detail: "Monday · 2 hours · Eleventh House",
+                startTime: "9 AM",
+                place: "Eleventh House, Lafayette",
+                visitsThisMonth: 3,
+                photos: [.asset("MeetupPhotoPlant"), .asset("MeetupPhotoDrink"), .asset("MeetupPhotoCafe")],
+                highlightIn: [.month]
+            ),
+            RecentHangout(
+                contact: leo,
+                title: "Climbing with Leo",
+                detail: "Sunday · 1 hr 30 min · Climbing gym",
+                startTime: "4 PM",
+                place: "Climbing gym, Lafayette",
+                feelings: [.energized, .connected],
+                reflection: "we finally got the purple route. leo talked me through the last move and i didn’t fall for once",
+                highlightIn: [.week]
+            ),
+            RecentHangout(
+                contact: nora,
+                title: "Dinner with Nora",
+                detail: "Saturday · 1 hr 20 min · Home",
+                startTime: "7 PM",
+                place: "Home",
+                feelings: [.atEase],
+                highlightIn: [.week, .month]
+            )
+        ]
+        let plans = [
+            ("Lunch", "12 PM", "1 hour", "Purdue Memorial Union"),
+            ("Walk", "5 PM", "45 min", "Celery Bog"),
+            ("Study session", "3 PM", "2 hours", "Hicks Library"),
+            ("Coffee", "10 AM", "1 hr 10 min", "Vienna Cafe")
+        ]
+        let days = ["Friday", "Thursday", "Wednesday", "Tuesday"]
+        var step = 0
+        for (contact, count) in [(nora, 7), (leo, 5)] {
+            for _ in 0..<count {
+                let plan = plans[step % plans.count]
+                hangouts.append(RecentHangout(
+                    contact: contact,
+                    title: "\(plan.0) with \(contact.firstName)",
+                    detail: "\(days[step % days.count]) · \(plan.2) · \(plan.3)",
+                    startTime: plan.1,
+                    place: "\(plan.3), Lafayette",
+                    photos: RecentHangout.photos(at: plan.3, seed: step)
+                ))
+                step += 1
+            }
+        }
+        return hangouts
+    }()
+
+    // MARK: - Friends
+
+    static let circle: [KithContact] = [nora, leo]
+
+    static let requests: [FriendRequest] = [
+        FriendRequest(
+            contact: KithContact(name: "Ari Brooks", face: initials("Ari Brooks", .apricot)),
+            connection: .friendsWith("Nora", andOthers: true),
+            // It pops in as you arrive, so it reads as just sent.
+            received: .now.addingTimeInterval(-60)
+        )
+    ]
+
+    static let mutuals = ["Nora", "Leo"]
+
+    // MARK: - Onboarding
+
+    /// "Find your friends": Nora and Leo are on Bloom to add; the rest are
+    /// contacts to invite.
+    static let onboardingFriends: [Friend] = [
+        Friend(name: "Nora Patel", face: .tint(FriendBlob.rose.color), isOnKith: true),
+        Friend(name: "Leo Ortiz", face: .tint(FriendBlob.sky.color), isOnKith: true),
+        Friend(name: "Alicia Zhou", face: .tint(FriendBlob.lavender.color)),
+        Friend(name: "Gabriel Lopez", face: .tint(FriendBlob.mint.color)),
+        Friend(name: "Mia Singh", face: .tint(FriendBlob.butter.color)),
+        Friend(name: "Jordan Tan", face: .tint(FriendBlob.periwinkle.color))
+    ]
+}
