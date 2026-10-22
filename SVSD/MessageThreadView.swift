@@ -57,7 +57,7 @@ struct MessageThreadView: View {
                     .font(.system(size: 12))
                     .foregroundStyle(.primary)
                 Image(systemName: "chevron.right")
-                    .font(.system(size: 9, weight: .semibold))
+                    .font(.system(size: 12, weight: .semibold))
                     .foregroundStyle(.tertiary)
             }
         }
@@ -74,7 +74,7 @@ struct MessageThreadView: View {
                     dateHeader
 
                     Text("Simulator preview · on iPhone this opens Messages")
-                        .font(.system(size: 11))
+                        .font(.system(size: 12))
                         .foregroundStyle(.secondary)
                         .frame(maxWidth: .infinity)
                         .padding(.top, 2)
@@ -86,7 +86,7 @@ struct MessageThreadView: View {
 
                     if delivered {
                         Text("Delivered")
-                            .font(.system(size: 11))
+                            .font(.system(size: 12))
                             .foregroundStyle(.secondary)
                             .frame(maxWidth: .infinity, alignment: .trailing)
                             .padding(.top, 2)
@@ -272,6 +272,8 @@ struct BubbleShape: Shape {
 /// is yours to write.
 struct MessageDraft: Identifiable {
     let contact: KithContact
+    /// Prefilled for an invite; empty for a normal message.
+    var body: String = ""
 
     var id: String { contact.id }
 }
@@ -286,7 +288,7 @@ extension View {
     func messageSheet(_ draft: Binding<MessageDraft?>) -> some View {
         sheet(item: draft) { draft in
             if MFMessageComposeViewController.canSendText() {
-                MessageComposeSheet(recipients: [draft.contact.name])
+                MessageComposeSheet(recipients: [draft.contact.name], body: draft.body)
                     .ignoresSafeArea()
             } else {
                 MessageThreadView(contact: draft.contact)
@@ -300,10 +302,12 @@ struct MessageComposeSheet: UIViewControllerRepresentable {
     @Environment(\.dismiss) private var dismiss
 
     var recipients: [String] = []
+    var body: String = ""
 
     func makeUIViewController(context: Context) -> MFMessageComposeViewController {
         let composer = MFMessageComposeViewController()
         composer.recipients = recipients
+        if !body.isEmpty { composer.body = body }
         composer.messageComposeDelegate = context.coordinator
         return composer
     }

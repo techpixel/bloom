@@ -63,6 +63,7 @@ struct MeetupDetailView: View {
     /// The offer to name the place waits a beat, then pops in.
     @State private var namingArrived = false
     @State private var screenWidth: CGFloat = 393
+    @State private var viewingPhoto: Int?
     @FocusState private var nameFocused: Bool
 
     private var isDark: Bool { colorScheme == .dark }
@@ -139,7 +140,10 @@ struct MeetupDetailView: View {
         .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { screenWidth = $0 }
         .animation(reduceMotion ? nil : .spring(response: 0.38, dampingFraction: 0.86), value: offersToName)
         .animation(reduceMotion ? nil : .spring(response: 0.38, dampingFraction: 0.86), value: naming)
-        .sheet(isPresented: $editingDetails) { detailsEditor }
+        .drawer(isPresented: $editingDetails) { detailsEditor }
+        .fullScreenCover(isPresented: Binding(get: { viewingPhoto != nil }, set: { if !$0 { viewingPhoto = nil } })) {
+            PhotoCarousel(photos: hangout.photos, index: viewingPhoto ?? 0) { viewingPhoto = nil }
+        }
         .photosPicker(isPresented: $choosingPhoto, selection: $pickedPhoto, matching: .images)
         .onChange(of: pickedPhoto) { _, item in
             guard let item else { return }
@@ -180,25 +184,25 @@ struct MeetupDetailView: View {
             Image("SettingsPin")
                 .renderingMode(.template)
                 .resizable()
-                .frame(width: 16, height: 16)
+                .frame(width: 18, height: 18)
                 .foregroundStyle(secondary)
                 .accessibilityHidden(true)
 
             // Nudged onto the pin's centre: AUTHENTIC Sans sits its letters high.
             if let name = hangout.placeName {
                 Text(name)
-                    .font(.kithCaptionStrong)
+                    .font(.kithCardTitle)
                     .foregroundStyle(ink)
-                    .kithCapCentered(13, relativeTo: .footnote)
+                    .kithCapCentered(15, relativeTo: .subheadline)
                 Text("· \(hangout.place)")
-                    .font(.kithCaption)
+                    .font(.kithSecondary)
                     .foregroundStyle(secondary)
-                    .kithCapCentered(13, relativeTo: .footnote)
+                    .kithCapCentered(15, relativeTo: .subheadline)
             } else {
                 Text(hangout.place)
-                    .font(.kithCaption)
+                    .font(.kithSecondary)
                     .foregroundStyle(secondary)
-                    .kithCapCentered(13, relativeTo: .footnote)
+                    .kithCapCentered(15, relativeTo: .subheadline)
             }
         }
         .lineLimit(1)
@@ -225,17 +229,17 @@ struct MeetupDetailView: View {
 
     private var namePrompt: some View {
         Group {
-            VStack(spacing: 2) {
+            VStack(spacing: 4) {
                 Text("You’ve been here \(hangout.visitsThisMonth) times in the last month.")
-                    .font(.kithCaption)
+                    .font(.kithSecondary)
                 Text("Name this new location?")
-                    .font(.kithCaptionStrong)
+                    .font(.kithCardTitle)
             }
             .foregroundStyle(secondary)
             .multilineTextAlignment(.center)
             .fixedSize(horizontal: false, vertical: true)
 
-            HStack(spacing: 8) {
+            HStack(spacing: 14) {
                 promptButton("PromptDismiss", label: "Not now") {
                     hangout.namingDismissed = true
                 }
@@ -246,8 +250,8 @@ struct MeetupDetailView: View {
                     nameFocused = true
                 }
             }
-            // The 44pt targets overhang the 30pt marks; keep them out of the card's padding.
-            .padding(.vertical, -7)
+            // The 58pt targets overhang the 42pt marks; keep that out of the card's padding.
+            .padding(.vertical, -8)
         }
     }
 
@@ -256,12 +260,12 @@ struct MeetupDetailView: View {
         Button(action: action) {
             Image(asset)
                 .resizable()
-                .frame(width: 30, height: 30)
-                .frame(width: 44, height: 44)
+                .frame(width: 42, height: 42)
+                .frame(width: 58, height: 58)
                 .contentShape(Rectangle())
         }
         .buttonStyle(PressableButtonStyle())
-        .padding(.horizontal, -7)
+        .padding(.horizontal, -8)
         .accessibilityLabel(label)
     }
 
@@ -295,7 +299,7 @@ struct MeetupDetailView: View {
                     } label: {
                         Text(on ? "✓ \(tag)" : "+ \(tag)")
                             .font(.kithFine)
-                            .foregroundStyle(on ? ink : KithTheme.recentMeta)
+                            .foregroundStyle(on ? ink : KithTheme.secondary(isDark))
                             .padding(.horizontal, 8)
                             .frame(height: 22)
                             .background(on ? KithTheme.feelingSelected : KithTheme.canvas(isDark), in: Capsule())
@@ -329,11 +333,10 @@ struct MeetupDetailView: View {
 
     /// The comp's bento: a tall photo, a square beside it, and under that a
     /// small one next to the add tile. Anything past three runs on in rows.
+    /// The same grid the friend's page uses, so a hangout's photos and the
+    /// whole set read as one thing. Adding closes the grid.
     private var photosSection: some View {
-        let width = screenWidth - 40
-        let unit = (width - 8) / 2
-        let small = (unit - 8) / 2
-        let photos = hangout.photos
+        let side = (screenWidth - 40 - 20) / 3
 
         return VStack(alignment: .leading, spacing: 12) {
             Text("Photos")
@@ -341,40 +344,23 @@ struct MeetupDetailView: View {
                 .foregroundStyle(ink)
                 .accessibilityAddTraits(.isHeader)
 
-            VStack(alignment: .leading, spacing: 8) {
-                HStack(alignment: .top, spacing: 8) {
-                    photoTile(at: 0, width: unit, height: unit + 8 + small)
-                    VStack(spacing: 8) {
-                        photoTile(at: 1, width: unit, height: unit)
-                        HStack(spacing: 8) {
-                            photoTile(at: 2, width: small, height: small)
-                            // The bento holds four for now. The plus closes it
-                            // until the fourth photo arrives and takes its slot.
-                            if photos.count > 3 {
-                                photoTile(at: 3, width: small, height: small)
-                            } else {
-                                addTile(side: small)
-                            }
-                        }
+            LazyVGrid(columns: Array(repeating: GridItem(.fixed(side), spacing: 10), count: 3), spacing: 10) {
+                ForEach(Array(hangout.photos.enumerated()), id: \.offset) { offset, photo in
+                    Button { viewingPhoto = offset } label: {
+                        photoImage(photo)
+                            .frame(width: side, height: side)
+                            .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                            .contentShape(Rectangle())
                     }
+                    .buttonStyle(PressableButtonStyle())
+                    .accessibilityLabel("Photo \(offset + 1) of \(hangout.photos.count)")
+                    .accessibilityHint("Opens it full size")
                 }
+
+                addTile(side: side)
             }
         }
-    }
-
-    @ViewBuilder
-    private func photoTile(at index: Int, width: CGFloat, height: CGFloat) -> some View {
-        if hangout.photos.indices.contains(index) {
-            photoImage(hangout.photos[index])
-                .frame(width: width, height: height)
-                .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
-                .accessibilityLabel("Photo \(index + 1)")
-        } else {
-            RoundedRectangle(cornerRadius: 6, style: .continuous)
-                .fill(fill)
-                .frame(width: width, height: height)
-                .accessibilityHidden(true)
-        }
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     @ViewBuilder
@@ -393,7 +379,7 @@ struct MeetupDetailView: View {
                 .font(KithType.font(.w90, 33, .title))
                 .foregroundStyle(ink)
                 .frame(width: side, height: side)
-                .background(fill, in: RoundedRectangle(cornerRadius: 6, style: .continuous))
+                .background(fill, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
         }
         .buttonStyle(PressableButtonStyle())
         .accessibilityLabel("Add Photos")
@@ -404,13 +390,13 @@ struct MeetupDetailView: View {
     /// Comp 69:869: how it felt as tags you can change here, then your notes.
     private var reflectionSection: some View {
         VStack(alignment: .leading, spacing: 12) {
-            (Text("Reflection").font(.kithCardTitle).foregroundStyle(ink)
-                + Text(" (only you can see this)").font(.kithSecondary).foregroundStyle(secondary))
+            (Text("Reflection").font(.kithSectionTitle).foregroundStyle(ink)
+                + Text(" (only you can see this)").font(.kithRowDetail).foregroundStyle(secondary))
                 .accessibilityAddTraits(.isHeader)
 
             VStack(alignment: .leading, spacing: 5) {
                 Text("Our time together felt:")
-                    .font(.kithCaption)
+                    .font(.kithRowDetail)
                     .foregroundStyle(secondary)
 
                 FlowLayout(spacing: 6, lineSpacing: -4) {
@@ -441,7 +427,7 @@ struct MeetupDetailView: View {
 
             VStack(alignment: .leading, spacing: 5) {
                 Text("Notes")
-                    .font(.kithCaption)
+                    .font(.kithRowDetail)
                     .foregroundStyle(secondary)
 
                 ReflectionField(text: $hangout.reflection, minHeight: 94, fill: KithTheme.suggestionCard(isDark), cornerRadius: 6)
@@ -484,8 +470,6 @@ struct MeetupDetailView: View {
         .padding(.top, 34)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(KithTheme.canvas(isDark).ignoresSafeArea())
-        .presentationDetents([.height(420)])
-        .presentationDragIndicator(.visible)
     }
 
     private func detailField(_ label: String, text: Binding<String>, prompt: String) -> some View {
@@ -568,50 +552,40 @@ struct MeetupDetailView: View {
 
 // MARK: - Shared pieces
 
-/// Photos full size, one at a time: swipe across for the next, swipe down or
-/// tap the cross to put them away.
+/// Photos full size, one at a time: swipe across for the next; tap anywhere
+/// outside the photo, or the cross, to put them away. No swipe-to-close, so a
+/// swipe across that drifts downward never throws the carousel away.
 struct PhotoCarousel: View {
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
-
     let photos: [MeetupPhoto]
     @State var index: Int
     var onClose: () -> Void
 
-    @State private var drop: CGFloat = 0
-
     var body: some View {
         ZStack(alignment: .top) {
             Color.black
-                .opacity(1 - min(0.6, abs(drop) / 400))
                 .ignoresSafeArea()
 
             TabView(selection: $index) {
                 ForEach(Array(photos.enumerated()), id: \.offset) { offset, photo in
-                    photo.image
-                        .resizable()
-                        .scaledToFit()
-                        .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
-                        .padding(.horizontal, 12)
-                        .tag(offset)
-                        .accessibilityLabel("Photo \(offset + 1) of \(photos.count)")
+                    ZStack {
+                        // The empty space around the photo closes it.
+                        Color.clear
+                            .contentShape(Rectangle())
+                            .onTapGesture(perform: onClose)
+
+                        photo.image
+                            .resizable()
+                            .scaledToFit()
+                            .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+                            .padding(.horizontal, 12)
+                            // Taps on the photo itself do nothing.
+                            .onTapGesture {}
+                            .accessibilityLabel("Photo \(offset + 1) of \(photos.count)")
+                    }
+                    .tag(offset)
                 }
             }
             .tabViewStyle(.page(indexDisplayMode: photos.count > 1 ? .always : .never))
-            .offset(y: drop)
-            .simultaneousGesture(
-                DragGesture(minimumDistance: 20)
-                    .onChanged { value in
-                        guard abs(value.translation.height) > abs(value.translation.width) else { return }
-                        drop = value.translation.height
-                    }
-                    .onEnded { value in
-                        if abs(value.translation.height) > 120 || abs(value.predictedEndTranslation.height) > 300 {
-                            onClose()
-                        } else {
-                            withAnimation(reduceMotion ? nil : .spring(response: 0.35, dampingFraction: 0.85)) { drop = 0 }
-                        }
-                    }
-            )
 
             HStack {
                 Button(action: onClose) {
@@ -633,11 +607,10 @@ struct PhotoCarousel: View {
                     .monospacedDigit()
                     .foregroundStyle(.white.opacity(0.8))
             }
-            .padding(.horizontal, 16)
-            .padding(.top, 12)
-            .opacity(1 - min(1, abs(drop) / 160))
+            .padding(16)
         }
         .statusBarHidden(true)
+        .accessibilityAction(.escape, onClose)
     }
 }
 
@@ -702,7 +675,7 @@ struct ReflectionField: View {
             text: $text,
             placeholder: "Add a few words about what stood out…",
             textColor: UIColor(KithTheme.ink(isDark)),
-            placeholderColor: UIColor(KithTheme.recentMeta),
+            placeholderColor: UIColor(KithTheme.secondary(isDark)),
             minHeight: minHeight - 24
         )
         .padding(12)

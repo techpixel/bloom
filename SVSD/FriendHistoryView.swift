@@ -38,7 +38,8 @@ struct FriendHistoryView: View {
                     .accessibilityAddTraits(.isHeader)
                     .frame(maxWidth: .infinity)
                     .padding(.horizontal, 12.25)
-                    .padding(.top, 20 * scale)
+                    // The drawer's grabber sits just above; leave it room.
+                    .padding(.top, 38 * scale)
 
                 ScrollView(.vertical, showsIndicators: false) {
                 VStack(alignment: .leading, spacing: 0) {
@@ -167,7 +168,7 @@ struct FriendHistoryView: View {
                     .font(.kithBodyStrong)
 
                 Image(systemName: "chevron.down")
-                    .font(.system(size: 9, weight: .semibold))
+                    .font(.system(size: 12, weight: .semibold))
             }
             .foregroundStyle(ink)
             .frame(maxWidth: .infinity)
@@ -176,6 +177,8 @@ struct FriendHistoryView: View {
         .accessibilityLabel("Month")
         .accessibilityValue(selectedMonth)
         .accessibilityHint("Shows another month")
+        // The label just changes; the fade belongs to the entries underneath.
+        .transaction { $0.animation = nil }
         .sensoryFeedback(.selection, trigger: selectedMonth)
     }
 
@@ -183,52 +186,7 @@ struct FriendHistoryView: View {
 
     /// One entry: how it felt, what it was, and a way into it.
     private func entry(_ hangout: RecentHangout) -> some View {
-        HStack(spacing: 12) {
-            VStack(alignment: .leading, spacing: 8) {
-                let feelings = Feeling.allCases.filter(hangout.feelings.contains)
-
-                HStack(spacing: 3) {
-                    if feelings.isEmpty {
-                        FeelingTag(
-                            "Needs Reflection",
-                            fill: KithTheme.canvas(isDark),
-                            text: secondary
-                        )
-                    } else {
-                        ForEach(feelings) { feeling in
-                            FeelingTag(feeling.rawValue, fill: feeling.pillFill)
-                        }
-                    }
-                }
-
-                VStack(alignment: .leading, spacing: 3) {
-                    Text(hangout.title)
-                        .font(.kithCaptionStrong)
-                        .foregroundStyle(ink)
-                    Text(hangout.detail)
-                        .font(.kithFine)
-                        .foregroundStyle(KithTheme.recentMeta)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-                .padding(.horizontal, 2)
-            }
-            .frame(maxWidth: .infinity, alignment: .leading)
-
-            Button { openHangout = hangout.id } label: {
-                Text("Details")
-                    .font(.kithCaption)
-                    .kithCapCentered(13, relativeTo: .footnote)
-                    .foregroundStyle(KithTheme.canvas(isDark))
-                    .frame(width: 70, height: 27)
-                    .background(ink, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
-                    .frame(minHeight: 44)
-                    .contentShape(Rectangle())
-            }
-            .buttonStyle(PressableButtonStyle())
-            .accessibilityLabel("Details for \(hangout.title)")
-        }
-        .padding(12)
-        .background(KithTheme.uiFill(isDark), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+        HangoutRow(hangout: hangout, lead: .none) { openHangout = hangout.id }
     }
 
     // MARK: - Grouping

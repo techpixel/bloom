@@ -314,7 +314,7 @@ private struct PhoneTabBar: View {
                             .scaledToFit()
                             .frame(width: 26, height: 26)
                         Text(item.title)
-                            .font(.system(size: 10, weight: .medium))
+                            .font(.system(size: 12, weight: .medium))
                     }
                     .foregroundStyle(chosen ? KithTheme.navActive : KithTheme.ink(false))
                     .frame(maxWidth: .infinity)

@@ -105,7 +105,7 @@ struct GoogleCalendarConnectSheet: View {
                 }
             }
         }
-        .presentationDetents([.medium, .large])
+        .presentationDetents([.large])
         .interactiveDismissDisabled(stage == .connecting)
     }
 

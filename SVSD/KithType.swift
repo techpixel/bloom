@@ -93,9 +93,13 @@ extension Font {
     /// The mutual friend's name inside a caption ("Friends with **Ishan**") — 150 @ 13
     static var kithCaptionHeavy: Font { KithType.font(.w150, 13, .footnote) }
     /// Suggestion card detail — 60 @ 12 (HIG Caption; the comp has 11)
-    static var kithFine: Font { KithType.font(.w60, 12, .caption) }
+    static var kithFine: Font { KithType.font(.w90, 12, .caption) }
     /// Feeling tags on a hangout row — 130 @ 12
     static var kithFineStrong: Font { KithType.font(.w130, 12, .caption) }
+    /// A section title inside a card — 130 @ 16
+    static var kithSectionTitle: Font { KithType.font(.w130, 16, .callout) }
+    /// The line under a row's title, and the small labels in a reflection — 90 @ 14
+    static var kithRowDetail: Font { KithType.font(.w90, 14, .subheadline) }
     /// A week range over a group of history entries — 90 @ 14
     static var kithSubrange: Font { KithType.font(.w90, 14, .subheadline) }
     /// The welcome tagline — 90 @ 15.62

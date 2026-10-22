@@ -95,7 +95,7 @@ struct ProfileView: View {
         .scrollDismissesKeyboard(.immediately)
         .background(KithTheme.canvas(isDark))
         .statusBarHidden(true)
-        .sheet(isPresented: $editingProfile) { profileEditor }
+        .drawer(isPresented: $editingProfile) { profileEditor }
         .sheet(isPresented: $connectingGoogle) {
             GoogleCalendarConnectSheet { googleCalendars = $0 }
         }
@@ -242,8 +242,6 @@ struct ProfileView: View {
                 }
             }
         }
-        .presentationDetents([.height(440)])
-        .presentationDragIndicator(.visible)
         // With changes in the draft, a swipe down asks first instead of
         // silently throwing them away.
         .interactiveDismissDisabled(draftChanged)
@@ -464,7 +462,8 @@ struct ProfileView: View {
         }
         .tint(KithTheme.overlap)
         .padding(.horizontal, 14)
-        .padding(.vertical, 18)
+        .padding(.vertical, 14)
+        .frame(minHeight: 68)
         .disabled(blocked)
         .opacity(blocked ? 0.45 : 1)
         .accessibilityHint(blocked ? "Turn on push notifications first" : "")
@@ -492,7 +491,8 @@ struct ProfileView: View {
                 }
             }
             .padding(.horizontal, 14)
-            .padding(.vertical, 18)
+            .padding(.vertical, 14)
+            .frame(minHeight: 68)
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)

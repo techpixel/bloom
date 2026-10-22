@@ -52,6 +52,8 @@ struct FriendRequest: Identifiable {
 struct FriendSuggestion: Identifiable {
     let contact: KithContact
     var connection: Connection?
+    /// How many friends you have in common — what the list sorts on.
+    var mutuals: Int = 0
 
     var id: String { contact.id }
 }
@@ -122,6 +124,9 @@ struct FriendsView: View {
     /// How far the first friend out drops below the top of the dial.
     private var dialDrop: CGFloat { dialRadius * (1 - cos(Self.dialStep)) }
 
+    /// Your circle, narrowed by the search like the lists under it. Each new
+    /// result is a fresh dial parked on its first friend, so typing never
+    /// spins it; friends who don't match simply aren't on it.
     private var visibleCircle: [KithContact] { circle.filter(matchesSearch) }
 
     /// Copies of your circle laid end to end. Odd, so the dial can start in the
@@ -150,33 +155,44 @@ struct FriendsView: View {
     private var visibleRequests: [FriendRequest] {
         requestArrived ? requests.filter { matchesSearch($0.contact) } : []
     }
-    private var visibleSuggestions: [FriendSuggestion] { suggestions.filter { matchesSearch($0.contact) } }
+    private var isSearching: Bool {
+        !search.trimmingCharacters(in: .whitespaces).isEmpty
+    }
+
+    /// Most mutuals first, so the people you half-know are at the top. While
+    /// you're searching it's alphabetical instead, which is easier to scan.
+    private var visibleSuggestions: [FriendSuggestion] {
+        let found = suggestions.filter { matchesSearch($0.contact) }
+        return isSearching
+            ? found.sorted { $0.contact.name < $1.contact.name }
+            : found.sorted { $0.mutuals > $1.mutuals }
+    }
 
     var body: some View {
-        // The title, search and your circle stay put; only the lists under
-        // them scroll.
-        VStack(alignment: .leading, spacing: 0) {
-            header
-                .padding(.horizontal, gutter)
-                .padding(.top, 24 * scale)
-
-            if !visibleCircle.isEmpty {
-                dial
-                    // A new search result is a new dial, parked on its friend
-                    // straight away, rather than the old one spinning round to it.
-                    .id(visibleCircle.map(\.id))
-                    .transaction { $0.animation = nil }
-                    .padding(.top, 27 * scale)
-            }
-
-            ScrollView {
+        // One scroll for the whole page: the title, your circle and the lists
+        // all move together.
+        ScrollView {
             VStack(alignment: .leading, spacing: 0) {
+                header
+                    .padding(.horizontal, gutter)
+                    .padding(.top, 24 * scale)
+
+                if !visibleCircle.isEmpty {
+                    dial
+                        // A new search result is a new dial, parked on its friend
+                        // straight away, rather than the old one spinning round to it.
+                        .id(visibleCircle.map(\.id))
+                        .transaction { $0.animation = nil }
+                        .padding(.top, 27 * scale)
+                }
+
+                Group {
                 if !visibleRequests.isEmpty {
                     section("Friend Requests") {
-                        VStack(spacing: 22) {
+                        VStack(spacing: 16) {
                             ForEach(visibleRequests) { requestRow($0) }
                         }
-                        .padding(16)
+                        .padding(12)
                         .background(card, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
                     }
                     .transition(.asymmetric(
@@ -187,16 +203,19 @@ struct FriendsView: View {
 
                 if !visibleSuggestions.isEmpty {
                     section("People You Might Know") {
-                        LazyVStack(spacing: 14) {
+                        LazyVStack(spacing: 10) {
                             ForEach(visibleSuggestions) { suggestion in
                                 suggestionRow(suggestion)
                                     .onAppear { loadMoreIfLast(suggestion) }
                             }
                         }
-                        .padding(16)
+                        .padding(12)
                         .background(card, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
                     }
-                    .padding(.top, visibleRequests.isEmpty ? 0 : 28 * scale)
+                    // AUTHENTIC Sans leaves a lot of air above its caps, so the
+                    // heading's line box reads as ~30pt of gap on its own. Pull
+                    // back against it rather than adding more.
+                    .padding(.top, visibleRequests.isEmpty ? 0 : -8)
                 }
 
                 if visibleCircle.isEmpty && visibleRequests.isEmpty && visibleSuggestions.isEmpty {
@@ -206,19 +225,12 @@ struct FriendsView: View {
                         .padding(.horizontal, gutter)
                         .padding(.top, 24)
                 }
+                }
+                .padding(.top, 40 * scale)
             }
             // Clear the floating tab bar, so the last row isn't under its glass.
             .padding(.bottom, 96)
-            }
-            // A clean edge at the top of the lists: rows disappear at the line
-            // where the first heading starts, never fading up into the
-            // names under your circle.
-            .clipped()
-            // The gap under your circle sits outside the scroll, so the clip
-            // line is the top of the first heading.
-            .padding(.top, 40 * scale)
         }
-        .frame(maxHeight: .infinity, alignment: .top)
         .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { screenWidth = $0 }
         .scrollDismissesKeyboard(.immediately)
         .sensoryFeedback(.success, trigger: accepted)
@@ -244,7 +256,7 @@ struct FriendsView: View {
                 "I’m on Bloom, an app for spending more real time with friends. Add me:",
                 URL(string: "https://bloom.app/add/\(Self.inviteHandle)")!
             ])
-            .presentationDetents([.medium, .large])
+            .presentationDetents([.large])
             .ignoresSafeArea()
         }
         .drawer(item: $overview) { friend in
@@ -428,9 +440,9 @@ struct FriendsView: View {
     // MARK: - Requests
 
     private func requestRow(_ request: FriendRequest) -> some View {
-        VStack(alignment: .leading, spacing: 12) {
+        VStack(alignment: .leading, spacing: 10) {
             HStack(alignment: .top, spacing: 15) {
-                ContactAvatar(contact: request.contact, diameter: 48, badgeRing: card, showsBloomBadge: true)
+                ContactAvatar(contact: request.contact, diameter: 46, badgeRing: card)
 
                 nameStack(request.contact, connection: request.connection)
                     .padding(.vertical, 3)
@@ -450,7 +462,7 @@ struct FriendsView: View {
                         .kithCapCentered(17, relativeTo: .body)
                         .foregroundStyle(KithTheme.secondaryOnFill(isDark))
                         .padding(.vertical, 4)
-                        .frame(maxWidth: .infinity, minHeight: 44)
+                        .frame(maxWidth: .infinity, minHeight: 36)
                         .overlay(Capsule().strokeBorder(secondary, lineWidth: 1))
                         .contentShape(Capsule())
                 }
@@ -462,13 +474,13 @@ struct FriendsView: View {
                         .kithCapCentered(17, relativeTo: .body)
                         .foregroundStyle(KithTheme.canvas(isDark))
                         .padding(.vertical, 4)
-                        .frame(maxWidth: .infinity, minHeight: 44)
+                        .frame(maxWidth: .infinity, minHeight: 36)
                         .background(ink, in: Capsule())
                 }
                 .accessibilityLabel("Accept \(request.contact.firstName)")
             }
             .buttonStyle(PressableButtonStyle())
-            .padding(.leading, 48 + 15)
+            .padding(.leading, 52 + 15)
         }
         .accessibilityElement(children: .contain)
     }
@@ -479,14 +491,14 @@ struct FriendsView: View {
         let contact = suggestion.contact
 
         return HStack(spacing: 12) {
-            ContactAvatar(contact: contact, diameter: 48, badgeRing: card, showsBloomBadge: true)
+            ContactAvatar(contact: contact, diameter: 46, badgeRing: card, showsBloomBadge: true)
 
             nameStack(contact, connection: suggestion.connection)
                 .frame(maxWidth: .infinity, alignment: .leading)
 
             requestButton(for: contact)
         }
-        .frame(minHeight: 60)
+        .frame(minHeight: 48)
     }
 
     /// Says what it does: people on Bloom get a friend request they have to
@@ -502,26 +514,30 @@ struct FriendsView: View {
             } else {
                 requested.insert(contact.id)
                 if !contact.isOnKith {
-                    inviting = MessageDraft(contact: contact)
+                    inviting = MessageDraft(
+                        contact: contact,
+                        body: "hey — come join me on Bloom: https://bloom.app/join"
+                    )
                 }
             }
         } label: {
-            Text(title)
-                .font(.kithCaption)
-                .kithCapCentered(13, relativeTo: .footnote)
-                .foregroundStyle(sent ? KithTheme.secondaryOnFill(isDark) : KithTheme.canvas(isDark))
-                .lineLimit(1)
-                .padding(.horizontal, 14)
-                .frame(minWidth: 96)
-                .frame(height: 38)
-                .background {
-                    if sent {
-                        Capsule().strokeBorder(secondary, lineWidth: 1)
-                    } else {
-                        Capsule().fill(ink)
-                    }
+            Group {
+                if sent {
+                    Text("Pending")
+                        .font(.kithCaption)
+                        .kithCapCentered(13, relativeTo: .footnote)
+                        .foregroundStyle(KithTheme.secondaryOnFill(isDark))
+                        .lineLimit(1)
+                        .padding(.horizontal, 12)
+                        .frame(height: 34)
+                        .overlay(Capsule().strokeBorder(secondary, lineWidth: 1))
+                } else {
+                    Image("AddFriendIcon")
+                        .resizable()
+                        .frame(width: 35, height: 35)
                 }
-                .frame(minHeight: 44)
+            }
+            .frame(minHeight: 44)
                 .contentShape(Rectangle())
         }
         .buttonStyle(PressableButtonStyle())
@@ -543,13 +559,13 @@ struct FriendsView: View {
         // The comp's name and subtitle sit 16.5pt apart, baseline to baseline.
         VStack(alignment: .leading, spacing: 4.5) {
             Text(contact.name)
-                .font(.kithCardTitle)
+                .font(.kithBodyStrong)
                 .foregroundStyle(ink)
                 .lineLimit(1)
 
             if let connection {
                 connectionText(connection)
-                    .font(.kithCaption)
+                    .font(.kithBody)
                     .foregroundStyle(secondary)
                     .lineLimit(1)
             }
@@ -631,13 +647,17 @@ struct ContactAvatar: View {
             .frame(width: diameter, height: diameter)
             .clipShape(Circle())
             .overlay(alignment: .bottomTrailing) {
+                // Badges are 30% of the photo, the glyph well inside its circle
+                // (about 45% of it), as iOS draws its Messages badge.
+                let badge = diameter * 0.3
                 if !contact.isOnKith {
                     Image("MessageBubbleIcon")
                         .renderingMode(.template)
                         .resizable()
-                        .frame(width: 8, height: 8)
+                        .scaledToFit()
+                        .frame(width: badge * 0.45, height: badge * 0.45)
                         .foregroundStyle(.white)
-                        .frame(width: 14, height: 14)
+                        .frame(width: badge, height: badge)
                         .background(KithTheme.messagesGreen, in: Circle())
                         .overlay(Circle().strokeBorder(badgeRing, lineWidth: 1.5))
                 } else if showsBloomBadge {
@@ -645,9 +665,9 @@ struct ContactAvatar: View {
                         .renderingMode(.template)
                         .resizable()
                         .scaledToFit()
-                        .frame(width: 8)
+                        .frame(width: badge * 0.5)
                         .foregroundStyle(KithTheme.canvas(false))
-                        .frame(width: 14, height: 14)
+                        .frame(width: badge, height: badge)
                         .background(KithTheme.ink(false), in: Circle())
                         .overlay(Circle().strokeBorder(badgeRing, lineWidth: 1.5))
                 }
@@ -815,7 +835,11 @@ extension FriendSuggestion {
             case 2: connection = nil
             default: connection = .note("\(1 + index % 9) friends on Bloom")
             }
-            return FriendSuggestion(contact: SamplePeople.contact(index, isOnKith: index % 3 == 0), connection: connection)
+            return FriendSuggestion(
+                contact: SamplePeople.contact(index, isOnKith: index % 3 == 0),
+                connection: connection,
+                mutuals: 1 + (index * 7) % 9
+            )
         }
     }
 }

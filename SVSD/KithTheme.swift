@@ -17,12 +17,10 @@ enum KithTheme {
         dark ? Color(red: 0.643, green: 0.620, blue: 0.576) : Color(red: 0.443, green: 0.420, blue: 0.384)
     }
 
-    /// Secondary text sitting on Ui Fill. A shade darker than
-    /// Kith/Colors/Secondary, which measures 4.23:1 there — under the 4.5:1
-    /// floor. Only for labels on an interactive control; disabled controls are
-    /// exempt and keep the token colour.
+    /// Subtext on a filled control. The same #716B62 as everywhere else —
+    /// kept as its own name so call sites still read as "on a fill".
     static func secondaryOnFill(_ dark: Bool) -> Color {
-        dark ? Color(red: 0.643, green: 0.620, blue: 0.576) : Color(red: 0.424, green: 0.400, blue: 0.365)
+        secondary(dark)
     }
 
     /// Kith/Colors/Ui Fill — #EEE5D8
@@ -91,8 +89,6 @@ enum KithTheme {
     /// The suggestion line on a Today card — #A44E1A
     static let suggestionAccent = Color(red: 0.643, green: 0.306, blue: 0.102)
 
-    /// Metadata under a recent hangout — #706777
-    static let recentMeta = Color(red: 0.439, green: 0.404, blue: 0.467)
 
     /// Glow behind the friend's avatar — #C3AFFE
     static let glow = Color(red: 0.765, green: 0.686, blue: 0.996)

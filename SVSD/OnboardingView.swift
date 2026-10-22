@@ -9,11 +9,11 @@ enum OnboardingStep: Int, CaseIterable, Equatable {
     case phone
     case name
     case profilePhoto
-    case celebrate
     case contacts
     case location
     case photos
     case calendar
+    case celebrate
     case friends
 
     var next: OnboardingStep? { OnboardingStep(rawValue: rawValue + 1) }
@@ -165,7 +165,9 @@ struct OnboardingView: View {
                     pageControl(size: size)
                 }
 
-                if step != .welcome {
+                // Only the photo is genuinely optional; everything else either
+                // needs an answer or is a single tap.
+                if step == .profilePhoto {
                     skipButton(size: size)
                 }
             }
@@ -1219,7 +1221,7 @@ struct OnboardingView: View {
     /// Straight into the app, for anyone who doesn't want the tour. On the
     /// photo step it skips just the photo and carries on.
     private func skipButton(size: CGSize) -> some View {
-        Button { step == .profilePhoto ? advance() : finish() } label: {
+        Button(action: advance) {
             Text("Skip")
                 .font(.kithCaptionStrong)
                 .foregroundStyle(KithTheme.secondary(isDark))

@@ -330,5 +330,8 @@ extension View {
         presentationDragIndicator(.visible)
             .presentationCornerRadius(28)
             .presentationBackground(KithTheme.canvas(false))
+            // Every drawer opens to the same height, editors included, so they
+            // don't each arrive at a different size.
+            .presentationDetents([.large])
     }
 }

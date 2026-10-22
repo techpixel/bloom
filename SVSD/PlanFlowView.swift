@@ -128,7 +128,7 @@ private struct DemoModeView: View {
         .padding(24)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .background(KithTheme.canvas(isDark))
-        .presentationDetents([.medium, .large])
+        .presentationDetents([.large])
         .presentationDragIndicator(.visible)
         .task(id: isRunning) {
             guard isRunning else { return }

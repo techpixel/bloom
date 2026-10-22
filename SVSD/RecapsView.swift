@@ -9,6 +9,58 @@ import SwiftUI
 @Observable
 final class HangoutStore {
     var hangouts = RecentHangout.sample
+    /// Times Bloom thinks you were with a friend and wants to check.
+    var sightings = Sighting.sample
+    /// The ones you said weren't a meeting. Kept so suggestions can learn
+    /// that being near someone there doesn't mean you met.
+    var notMet: [Sighting] = []
+
+    /// Yes: it becomes a hangout, newest of all, so Recent asks how it felt.
+    func confirm(_ sighting: Sighting) {
+        sightings.removeAll { $0.id == sighting.id }
+        hangouts.insert(sighting.hangout, at: 0)
+    }
+
+    /// No: it's set aside and remembered rather than logged.
+    func dismiss(_ sighting: Sighting) {
+        sightings.removeAll { $0.id == sighting.id }
+        notMet.append(sighting)
+    }
+}
+
+/// Bloom noticed you and a friend in the same place (comp 283:2193) and asks
+/// whether it was a meeting before logging anything.
+struct Sighting: Identifiable {
+    let contact: KithContact
+    var place: String
+    var when: String
+    var startTime: String
+
+    let id = UUID()
+
+    var hangout: RecentHangout {
+        let spot = place.components(separatedBy: ",").first ?? place
+        return RecentHangout(
+            contact: contact,
+            title: "Time with \(contact.firstName)",
+            detail: "Today · \(spot)",
+            startTime: startTime,
+            place: place,
+            photos: RecentHangout.photos(at: spot, seed: contact.name.count)
+        )
+    }
+
+    static let sample: [Sighting] = DemoCast.isJudge
+        ? [Sighting(contact: DemoCast.leo, place: "Circle K, West Lafayette", when: "Today at 6:13 PM", startTime: "6 PM")]
+        : [Sighting(
+            contact: KithContact(
+                name: "Ishan Goyal",
+                face: .photo(Portrait(asset: "AvatarIshan", width: 1.0751, height: 1.2933, x: -0.0173, y: -0.09))
+            ),
+            place: "Circle K, West Lafayette",
+            when: "Today at 6:13 PM",
+            startTime: "6 PM"
+        )]
 }
 
 // MARK: - Models
@@ -20,9 +72,10 @@ enum RecapPeriod: String, CaseIterable, Identifiable {
     var id: String { rawValue }
 
     /// "OCTOBER 19-25" for the week you're in, "OCTOBER" for the month.
-    var dateLabel: String {
+    /// `weeksBack` steps the week range backwards; the month ignores it.
+    func dateLabel(weeksBack: Int = 0) -> String {
         let calendar = Calendar.current
-        let now = Date()
+        let now = calendar.date(byAdding: .weekOfYear, value: -weeksBack, to: Date()) ?? Date()
         let month = DateFormatter()
         month.dateFormat = "MMMM"
         switch self {
@@ -64,17 +117,17 @@ struct RecapsView: View {
     var onOpenProfile: () -> Void = {}
 
     @State private var period = RecapPeriod.week
+    /// How many weeks back the recap is showing; 0 is this week.
+    @State private var weeksBack = 0
+    /// Keeps one pull from stepping several weeks at once.
+    @State private var steppingWeek = false
     @State private var screenWidth: CGFloat = 393
     @State private var appeared = RecapsView.hasAppeared
     @State private var openFriend: KithContact?
     @State private var openHangout: RecentHangout.ID?
     /// How far you've dragged the cluster to look around it.
-    @State private var pan: CGSize = .zero
-    @GestureState private var dragging: CGSize = .zero
-    /// The float's own clock: frozen while you drag, shifted by however long
-    /// that took, so letting go doesn't snap the bubbles forward.
-    @State private var floatShift: Double = 0
-    @State private var frozenAt: Double?
+
+
     private static var hasAppeared = false
 
     private var isDark: Bool { colorScheme == .dark }
@@ -84,8 +137,9 @@ struct RecapsView: View {
     /// Where the cluster starts in the comp, and how tall it is per period, so
     /// "Highlights" lands where each comp puts it.
     private static let clusterTop: CGFloat = 140
+    private static let monthHeight: CGFloat = 470
     private func clusterHeight(_ period: RecapPeriod) -> CGFloat {
-        period == .week ? 322 : 470
+        period == .week ? 322 : Self.monthHeight
     }
 
     var body: some View {
@@ -107,7 +161,15 @@ struct RecapsView: View {
                         .padding(.top, 28)
                 }
                 .padding(.bottom, 28)
+                .background {
+                    GeometryReader { geo in
+                        Color.clear.onChange(of: geo.frame(in: .named("recapScroll")).minY) { _, y in
+                            week(fromScroll: y)
+                        }
+                    }
+                }
             }
+            .coordinateSpace(name: "recapScroll")
         }
         .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { screenWidth = $0 }
         .task {
@@ -149,7 +211,7 @@ struct RecapsView: View {
                 .accessibilityLabel("\(period.rawValue) recap")
                 .accessibilityHint("Switches between this week and this month")
 
-                Text(period.dateLabel)
+                Text(period.dateLabel(weeksBack: weeksBack))
                     .font(.kithCaption)
                     .foregroundStyle(KithTheme.secondary(isDark))
                     .contentTransition(.opacity)
@@ -158,6 +220,34 @@ struct RecapsView: View {
             Spacer(minLength: 12)
         }
         .sensoryFeedback(.selection, trigger: period)
+        .onChange(of: period) { weeksBack = 0 }
+    }
+
+    /// Scrolling the page on past the week takes you to the month, and coming
+    /// back to the top returns. The two thresholds leave a dead band between
+    /// them, so a switch can't immediately undo itself as the layout resizes.
+    /// Pulling past the end of a week's recap takes you to the week before it;
+    /// pulling back past the top returns. Only while the week is showing — the
+    /// month is chosen from the header, not by scrolling.
+    private func week(fromScroll y: CGFloat) {
+        guard period == .week, !steppingWeek else { return }
+        let step: Int
+        if y < -150 {
+            step = 1
+        } else if y > 60, weeksBack > 0 {
+            step = -1
+        } else {
+            return
+        }
+        steppingWeek = true
+        withAnimation(reduceMotion ? nil : .spring(response: 0.5, dampingFraction: 0.86)) {
+            weeksBack = max(0, weeksBack + step)
+        }
+        // One step per pull; the next needs a fresh gesture.
+        Task { @MainActor in
+            try? await Task.sleep(for: .milliseconds(600))
+            steppingWeek = false
+        }
     }
 
     // MARK: - Cluster
@@ -165,94 +255,22 @@ struct RecapsView: View {
     private var cluster: some View {
         let bubbles = Self.bubbles
 
-        return TimelineView(.animation(minimumInterval: 1 / 60, paused: reduceMotion || frozenAt != nil)) { timeline in
-            let time = reduceMotion ? 0 : (frozenAt ?? (timeline.date.timeIntervalSinceReferenceDate - floatShift))
+        return TimelineView(.animation(minimumInterval: 1 / 60, paused: reduceMotion)) { timeline in
+            let time = reduceMotion ? 0 : timeline.date.timeIntervalSinceReferenceDate
             ZStack(alignment: .topLeading) {
                 ForEach(Array(bubbles.enumerated()), id: \.element.id) { index, bubble in
                     bubbleView(bubble, index: index, time: time)
                 }
+
+                // A second pass so no face can cover a neighbour's count.
+                ForEach(Array(bubbles.enumerated()), id: \.element.id) { index, bubble in
+                    bubbleCount(bubble, index: index, time: time)
+                }
             }
-            .offset(currentPan)
         }
         .frame(width: screenWidth, height: clusterHeight(period) * scale, alignment: .topLeading)
         .clipped()
-        .contentShape(Rectangle())
-        .gesture(panGesture)
-        .onChange(of: period) {
-            withAnimation(reduceMotion ? nil : .spring(response: 0.55, dampingFraction: 0.85)) { pan = .zero }
-        }
-    }
-
-    private var currentPan: CGSize {
-        let raw = CGSize(width: pan.width + dragging.width, height: pan.height + dragging.height)
-        let range = panRange
-        return CGSize(width: rubberBand(raw.width, range.x), height: rubberBand(raw.height, range.y))
-    }
-
-    /// Drag the cluster to look around it. It gives a little past the edges
-    /// of what's there, and settles back inside when you let go.
-    private var panGesture: some Gesture {
-        DragGesture(minimumDistance: 4)
-            .updating($dragging) { value, state, _ in state = value.translation }
-            .onChanged { _ in
-                if frozenAt == nil {
-                    frozenAt = Date().timeIntervalSinceReferenceDate - floatShift
-                }
-            }
-            .onEnded { value in
-                if let frozen = frozenAt {
-                    floatShift = Date().timeIntervalSinceReferenceDate - frozen
-                    frozenAt = nil
-                }
-
-                // A clear vertical throw swaps the range instead of panning:
-                // up for the wider view, down for the narrower one.
-                let drop = value.predictedEndTranslation
-                if abs(drop.height) > 90, abs(drop.height) > abs(drop.width) * 1.5 {
-                    let wanted: RecapPeriod = drop.height < 0 ? .month : .week
-                    if wanted != period {
-                        withAnimation(reduceMotion ? nil : .spring(response: 0.55, dampingFraction: 0.82)) {
-                            period = wanted
-                            pan = .zero
-                        }
-                        return
-                    }
-                }
-                let range = panRange
-                let thrown = CGSize(
-                    width: pan.width + value.translation.width + (value.predictedEndTranslation.width - value.translation.width) * 0.35,
-                    height: pan.height + value.translation.height + (value.predictedEndTranslation.height - value.translation.height) * 0.35
-                )
-                withAnimation(reduceMotion ? nil : .spring(response: 0.5, dampingFraction: 0.86)) {
-                    pan = CGSize(
-                        width: min(max(thrown.width, range.x.lowerBound), range.x.upperBound),
-                        height: min(max(thrown.height, range.y.lowerBound), range.y.upperBound)
-                    )
-                }
-            }
-    }
-
-    /// How far the cluster can travel each way: enough to bring the outermost
-    /// friend fully on screen, and no further.
-    private var panRange: (x: ClosedRange<CGFloat>, y: ClosedRange<CGFloat>) {
-        let spots = Self.bubbles.compactMap { $0.spots[period] }
-        guard !spots.isEmpty else { return (0...0, 0...0) }
-        let margin: CGFloat = 16
-        let left = spots.map { ($0.center.x - $0.diameter / 2) * scale }.min()!
-        let right = spots.map { ($0.center.x + $0.diameter / 2) * scale }.max()!
-        let top = spots.map { ($0.center.y - Self.clusterTop - $0.diameter / 2) * scale }.min()!
-        let bottom = spots.map { ($0.center.y - Self.clusterTop + $0.diameter / 2 + 14) * scale }.max()!
-        let width = screenWidth, height = clusterHeight(period) * scale
-        let x = min(0, width - margin - right)...max(0, margin - left)
-        let y = min(0, height - margin - bottom)...max(0, margin - top)
-        return (x, y)
-    }
-
-    /// Past the range the drag moves a third as far, so the edge is felt.
-    private func rubberBand(_ value: CGFloat, _ range: ClosedRange<CGFloat>) -> CGFloat {
-        if value < range.lowerBound { return range.lowerBound + (value - range.lowerBound) / 3 }
-        if value > range.upperBound { return range.upperBound + (value - range.upperBound) / 3 }
-        return value
+        .allowsHitTesting(true)
     }
 
     @ViewBuilder
@@ -266,25 +284,11 @@ struct RecapsView: View {
 
         Button { openFriend = bubble.contact } label: {
             ContactAvatar(contact: bubble.contact, diameter: diameter)
-                .overlay(alignment: .bottom) {
-                    if let times = countShown(bubble), labelFits(centerX: center.x + currentPan.width) {
-                        Text(times == 1 ? "1 time" : "\(times) times")
-                            .font(.kithCaptionStrong)
-                            .contentTransition(.numericText(value: Double(times)))
-                            // Wider than a small bubble is fine; wrapping isn't.
-                            .fixedSize()
-                            .kithCapCentered(13, relativeTo: .footnote)
-                            .foregroundStyle(KithTheme.canvas(isDark))
-                            .padding(.horizontal, 9)
-                            .padding(.vertical, 3)
-                            .background(ink, in: Capsule())
-                            .rotationEffect(.degrees(bubble.tilt))
-                            .offset(y: 8)
-                            .transition(.opacity.combined(with: .scale(scale: 0.8)))
-                    }
-                }
+                .contentShape(Circle())
         }
         .buttonStyle(PressableButtonStyle())
+        .frame(width: diameter, height: diameter)
+        .contentShape(Circle())
         .position(center)
         .offset(float)
         .opacity(here && appeared ? 1 : 0)
@@ -300,6 +304,41 @@ struct RecapsView: View {
         .accessibilityHint("Opens your recap with \(bubble.contact.firstName)")
     }
 
+    /// The "N times" capsule, drawn above every face so it's never buried.
+    @ViewBuilder
+    private func bubbleCount(_ bubble: RecapBubble, index: Int, time: Double) -> some View {
+        let spot = bubble.spots[period] ?? bubble.spots.values.first!
+        let here = bubble.spots[period] != nil
+        let diameter = spot.diameter * scale
+        let center = CGPoint(x: spot.center.x * scale, y: (spot.center.y - Self.clusterTop) * scale)
+        let float = CGSize(width: 1.6 * sin(time * 0.5 + Double(index)), height: 2 * cos(time * 0.42 + Double(index) * 1.3))
+
+        if let times = countShown(bubble), labelFits(centerX: center.x) {
+            Text(times == 1 ? "1 time" : "\(times) times")
+                .font(.kithCaptionStrong)
+                .contentTransition(.numericText(value: Double(times)))
+                // Wider than a small bubble is fine; wrapping isn't.
+                .fixedSize()
+                .kithCapCentered(13, relativeTo: .footnote)
+                .foregroundStyle(KithTheme.canvas(isDark))
+                .padding(.horizontal, 9)
+                .padding(.vertical, 3)
+                .background(ink, in: Capsule())
+                .rotationEffect(.degrees(bubble.tilt))
+                // Sits on the bubble's lower edge, as it did as an overlay.
+                .position(x: center.x, y: center.y + diameter / 2 + 8)
+                .offset(float)
+                .opacity(here && appeared ? 1 : 0)
+                .scaleEffect(here && appeared ? 1 : 0.6)
+                .animation(
+                    reduceMotion ? nil : .spring(response: 0.44, dampingFraction: 0.76).delay(appeared ? Double(index) * 0.028 : 0),
+                    value: appeared
+                )
+                .allowsHitTesting(false)
+                .accessibilityHidden(true)
+        }
+    }
+
     /// Bubbles at the edges hang off the screen, as more friends past the
     /// edge; a count under one would be cut off, so they go without.
     private func labelFits(centerX: CGFloat) -> Bool {
@@ -310,7 +349,9 @@ struct RecapsView: View {
     /// Every bubble shows its count, in both periods; switching rolls the
     /// numbers over rather than swapping the labels.
     private func countShown(_ bubble: RecapBubble) -> Int? {
-        bubble.times[period]
+        guard let times = bubble.times[period] else { return nil }
+        // Earlier weeks are quieter, so stepping back visibly changes the cluster.
+        return period == .week ? max(1, times - weeksBack) : times
     }
 
     /// The pastel bloom behind the cluster, made of the blobs of the friends
@@ -391,10 +432,7 @@ struct FriendRecapView: View {
 
     var body: some View {
         let theirs = store.hangouts.filter { $0.contact.name == contact.name }
-        // Every hangout draws from the same pool, so the friend's gallery would
-        // otherwise show the same place three or four times over.
-        var seenPhotos: Set<String> = []
-        let photos = theirs.flatMap(\.photos).filter { seenPhotos.insert($0.id).inserted }
+        let photos = galleryPhotos
 
         ZStack(alignment: .topLeading) {
             KithTheme.canvas(isDark).ignoresSafeArea()
@@ -457,7 +495,7 @@ struct FriendRecapView: View {
         .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { screenWidth = $0 }
         .fullScreenCover(isPresented: Binding(get: { viewingPhoto != nil }, set: { if !$0 { viewingPhoto = nil } })) {
             PhotoCarousel(
-                photos: store.hangouts.filter { $0.contact.name == contact.name }.flatMap(\.photos),
+                photos: galleryPhotos,
                 index: viewingPhoto ?? 0
             ) { viewingPhoto = nil }
         }
@@ -474,6 +512,17 @@ struct FriendRecapView: View {
             guard let item else { return }
             Task { await addPhoto(item) }
         }
+    }
+
+    /// Every photo from your time together, one of each. The grid and the
+    /// carousel must walk the same list or tapping a tile opens a different
+    /// photo than the one you tapped.
+    private var galleryPhotos: [MeetupPhoto] {
+        var seen: Set<String> = []
+        return store.hangouts
+            .filter { $0.contact.name == contact.name }
+            .flatMap(\.photos)
+            .filter { seen.insert($0.id).inserted }
     }
 
     /// The gallery spans every hangout, so a photo you add lands on the latest.
@@ -507,6 +556,9 @@ struct FriendRecapView: View {
                         .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
+                // The 44pt target is kept for the finger; the space it adds
+                // around the label is taken back so the gap reads as ~5pt.
+                .padding(.vertical, -15)
                 .accessibilityHint("Opens every time you’ve spent with \(contact.firstName)")
             }
         }
@@ -514,74 +566,9 @@ struct FriendRecapView: View {
 
     /// Your latest time together: a photo from it, what it was, and a way in.
     private func latestCard(_ hangout: RecentHangout) -> some View {
-        let feelings = Feeling.allCases.filter(hangout.feelings.contains)
-
-        // The photo runs the card's full height, however much the text beside
-        // it takes, so the two always line up.
-        let thumbnail: CGFloat = 92
-
-        return VStack(alignment: .leading, spacing: 12) {
-                VStack(alignment: .leading, spacing: 6) {
-                    HStack(spacing: 3) {
-                        if feelings.isEmpty {
-                            FeelingTag(
-                                "Needs Reflection",
-                                fill: KithTheme.canvas(isDark),
-                                text: secondary
-                            )
-                        } else {
-                            ForEach(feelings) { feeling in
-                                FeelingTag(feeling.rawValue, fill: feeling.pillFill)
-                            }
-                        }
-                    }
-
-                    VStack(alignment: .leading, spacing: 3) {
-                    Text(Self.shortTitle(hangout))
-                        .font(.kithCaptionStrong)
-                        .foregroundStyle(ink)
-                    Text(hangout.detail)
-                        .font(.kithFine)
-                        .foregroundStyle(secondary)
-                        .fixedSize(horizontal: false, vertical: true)
-                    }
-                }
-
-                Button { openHangout = hangout.id } label: {
-                    Text("View Your Time Together")
-                        .font(.kithCaption)
-                        .kithCapCentered(13, relativeTo: .footnote)
-                        .foregroundStyle(KithTheme.canvas(isDark))
-                        .frame(maxWidth: .infinity)
-                        .frame(height: 29)
-                        .background(ink, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
-                        .frame(minHeight: 44)
-                        .contentShape(Rectangle())
-                }
-                .buttonStyle(PressableButtonStyle())
-                .padding(.vertical, -7.5)
-            }
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(.leading, thumbnail + 12)
-            .frame(minHeight: thumbnail)
-            .overlay(alignment: .leading) {
-                Group {
-                    if let photo = hangout.photos.first {
-                        photo.image
-                            .resizable()
-                            .scaledToFill()
-                    } else {
-                        KithTheme.suggestionCard(isDark)
-                            .overlay(ContactAvatar(contact: hangout.contact, diameter: 56))
-                    }
-                }
-                .frame(width: thumbnail)
-                .frame(maxHeight: .infinity)
-                .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
-                .accessibilityHidden(true)
-            }
-        .padding(12)
-        .background(KithTheme.uiFill(isDark), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+        HangoutRow(hangout: hangout, lead: .photo, title: Self.shortTitle(hangout)) {
+            openHangout = hangout.id
+        }
     }
 
     /// "Studying with Manitej" reads "Studying at 9 AM" on Manitej's own page.
@@ -648,9 +635,26 @@ struct FriendRecapView: View {
 /// was. One you haven't answered yet shows a "reflect" tag instead. Tapping
 /// opens the entry.
 struct HangoutRow: View {
+    /// What sits at the leading edge. The row is otherwise identical wherever
+    /// it appears, which is the point — Home, a friend's page and their
+    /// history all draw the same component.
+    enum Lead {
+        /// Their face: for lists where the row names a person.
+        case avatar
+        /// A photo from the hangout: for a friend's own page, where the face
+        /// is already at the top of the screen.
+        case photo
+        /// Nothing, for the history list.
+        case none
+    }
+
     @Environment(\.colorScheme) private var colorScheme
 
     let hangout: RecentHangout
+    var lead: Lead = .avatar
+    /// Overrides the title; a friend's page says "Studying at 9am" where a
+    /// mixed list says "Studying with Manitej".
+    var title: String?
     var open: () -> Void
 
     var body: some View {
@@ -659,7 +663,22 @@ struct HangoutRow: View {
 
         Button(action: open) {
             HStack(spacing: 12) {
-                ContactAvatar(contact: hangout.contact, diameter: 75)
+                switch lead {
+                case .avatar:
+                    ContactAvatar(contact: hangout.contact, diameter: 75)
+                case .photo:
+                    Group {
+                        if let photo = hangout.photos.first {
+                            photo.image.resizable().scaledToFill()
+                        } else {
+                            ContactAvatar(contact: hangout.contact, diameter: 75)
+                        }
+                    }
+                    .frame(width: 75, height: 75)
+                    .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+                case .none:
+                    EmptyView()
+                }
 
                 VStack(alignment: .leading, spacing: 6) {
                     HStack(spacing: 3) {
@@ -675,14 +694,15 @@ struct HangoutRow: View {
                             }
                         }
                     }
+                    .offset(x: -2)
 
                     VStack(alignment: .leading, spacing: 5) {
-                        Text(hangout.title)
+                        Text(title ?? hangout.title)
                             .font(.kithCaptionStrong)
                             .foregroundStyle(KithTheme.ink(isDark))
                         Text(hangout.detail)
-                            .font(.kithFine)
-                            .foregroundStyle(KithTheme.recentMeta)
+                            .font(.kithRowDetail)
+                            .foregroundStyle(KithTheme.secondary(isDark))
                             .lineSpacing(3)
                             .fixedSize(horizontal: false, vertical: true)
                     }
@@ -694,7 +714,7 @@ struct HangoutRow: View {
                     .foregroundStyle(KithTheme.secondary(isDark))
                     .padding(.trailing, 4)
             }
-            .padding(12)
+            .padding(16)
             .background(KithTheme.uiFill(isDark), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
             .contentShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
         }
@@ -795,8 +815,46 @@ private extension RecapsView {
     /// Measured off the comps: centre and diameter in the 393pt frame.
     static let bubbles: [RecapBubble] = {
         let friend = { (key: String) in RecentHangout.recapFriends[key]! }
-        return radiating(listed(friend))
+        // The month only shows people you saw three times or more, and only
+        // people with a photo: no initials-only faces padding it out.
+        let people = listed(friend).map { bubble in
+            var bubble = bubble
+            let hasPhoto: Bool
+            if case .photo = bubble.contact.face { hasPhoto = true } else { hasPhoto = DemoCast.isJudge }
+            if (bubble.times[.month] ?? 0) < 3 || !hasPhoto {
+                bubble.spots[.month] = nil
+                bubble.times[.month] = nil
+            }
+            return bubble
+        }
+        .filter { !$0.spots.isEmpty }
+        return fitted(radiating(people))
     }()
+
+    /// Scales and centres the month so the whole circle sits on screen,
+    /// edge to edge with a small margin, nobody cut off at the sides.
+    private static func fitted(_ bubbles: [RecapBubble]) -> [RecapBubble] {
+        let spots = bubbles.compactMap { $0.spots[.month] }
+        guard !spots.isEmpty else { return bubbles }
+        let margin: CGFloat = 14, labelRoom: CGFloat = 16
+        let minX = spots.map { $0.center.x - $0.diameter / 2 }.min()!
+        let maxX = spots.map { $0.center.x + $0.diameter / 2 }.max()!
+        let minY = spots.map { $0.center.y - $0.diameter / 2 }.min()!
+        let maxY = spots.map { $0.center.y + $0.diameter / 2 }.max()! + labelRoom
+        let width: CGFloat = 393 - margin * 2, height: CGFloat = monthHeight - margin * 2
+        let k = min(width / (maxX - minX), height / (maxY - minY), 1.25)
+        let offsetX = margin + (width - (maxX - minX) * k) / 2
+        let offsetY = clusterTop + margin + (height - (maxY - minY) * k) / 2
+        return bubbles.map { bubble in
+            guard let spot = bubble.spots[.month] else { return bubble }
+            var bubble = bubble
+            bubble.spots[.month] = (
+                CGPoint(x: offsetX + (spot.center.x - minX) * k, y: offsetY + (spot.center.y - minY) * k),
+                spot.diameter * k
+            )
+            return bubble
+        }
+    }
 
     /// The comp's people and counts. Week keeps the comp's own placement;
     /// Month is laid out by `radiating`.

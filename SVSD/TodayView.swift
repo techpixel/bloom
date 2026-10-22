@@ -30,6 +30,9 @@ struct RecentHangout: Identifiable {
     var placeName: String?
     var placeTags: [String] = []
     var namingDismissed = false
+    /// You dismissed the prompt. It stays unreflected and keeps its Needs
+    /// Reflection pill in the lists; it just stops asking on Home.
+    var reflectionDismissed = false
     var photos: [MeetupPhoto] = []
     var feelings: Set<Feeling> = []
     var reflection = ""
@@ -69,6 +72,7 @@ struct TodayView: View {
     /// return to the tab.
     @State private var screenWidth: CGFloat = 393
     @State private var overviewFriend: KithContact?
+    @State private var sightingPing = 0
     @State private var entered = TodayView.hasEntered
     @State private var friendSectionShown = TodayView.hasEntered
     private static var hasEntered = false
@@ -201,6 +205,7 @@ struct TodayView: View {
             PlanFlowView(onBack: { planning = nil })
         }
         .sensoryFeedback(.success, trigger: savedReflection)
+        .sensoryFeedback(.selection, trigger: sightingPing)
         // Back from the entry: the card picks up whatever was changed there.
         .onChange(of: openHangout) { _, open in
             if open == nil { loadDraft() }
@@ -383,11 +388,6 @@ struct TodayView: View {
     private func haloAvatar(_ contact: KithContact) -> some View {
         Button { overviewFriend = contact } label: {
             ContactAvatar(contact: contact, diameter: 96.664, badgeRing: card)
-                .background {
-                    DriftingBlob(blob: contact.blob, length: 150, seed: Double(contact.name.count), wander: 0.025)
-                        .blur(radius: 5)
-                        .offset(x: -3, y: 4)
-                }
                 .contentShape(Circle())
         }
         .buttonStyle(PressableButtonStyle())
@@ -422,7 +422,7 @@ struct TodayView: View {
     /// it, the last few friends you've already answered for.
     @ViewBuilder
     private var recentSection: some View {
-        if !recents.isEmpty {
+        if !recents.isEmpty || !store.sightings.isEmpty {
             VStack(alignment: .leading, spacing: 10) {
                 Text("Recent")
                     .font(.kithBodyStrong)
@@ -431,13 +431,21 @@ struct TodayView: View {
                     .padding(.horizontal, 20)
                     .entrance(2, visible: entered)
 
+                // Things to answer come first, the reflection before anything
+                // else; only once there are none do your recent hangouts show.
                 VStack(spacing: 10) {
                     if let asking = awaitingReflection {
                         reflectionCard(asking)
                             .matchedGeometryEffect(id: asking.id, in: recentCards)
                             .transition(.opacity)
                             .padding(.horizontal, 20)
-                    } else if !answeredRecents.isEmpty {
+                    }
+                    if let sighting = store.sightings.first {
+                        sightingCard(sighting)
+                            .transition(.opacity.combined(with: .scale(scale: 0.97, anchor: .top)))
+                            .padding(.horizontal, 20)
+                    }
+                    if awaitingReflection == nil, store.sightings.isEmpty, !answeredRecents.isEmpty {
                         ScrollView(.horizontal, showsIndicators: false) {
                             LazyHStack(spacing: 10) {
                                 ForEach(answeredRecents) { hangout in
@@ -458,6 +466,80 @@ struct TodayView: View {
         }
     }
 
+    /// "Did you meet with Ishan?" (comp 283:2193): where and when, then the
+    /// same pair of buttons Friend Requests uses. Yes logs it as a hangout,
+    /// which Recent then asks about; No is remembered for suggestions.
+    private func sightingCard(_ sighting: Sighting) -> some View {
+        HStack(alignment: .top, spacing: 12) {
+            ContactAvatar(contact: sighting.contact, diameter: 60, badgeRing: card)
+
+            VStack(alignment: .leading, spacing: 14) {
+                VStack(alignment: .leading, spacing: 5) {
+                    Text("Did you meet with \(sighting.contact.name)?")
+                        .font(.kithCardTitle)
+                        .foregroundStyle(ink)
+                        .fixedSize(horizontal: false, vertical: true)
+
+                    HStack(spacing: 4) {
+                        Image("SettingsPin")
+                            .renderingMode(.template)
+                            .resizable()
+                            .frame(width: 14, height: 14)
+                            .foregroundStyle(secondary)
+                            .accessibilityHidden(true)
+                        Text(sighting.place)
+                            .font(.kithFine)
+                            .foregroundStyle(secondary)
+                            .kithCapCentered(12, relativeTo: .caption)
+                    }
+
+                    Text(sighting.when)
+                        .font(.kithFine)
+                        .foregroundStyle(secondary)
+                }
+                .accessibilityElement(children: .combine)
+
+                HStack(spacing: 10) {
+                    Button { answer(sighting, met: false) } label: {
+                        Text("No")
+                            .font(.kithBody)
+                            .kithCapCentered(17, relativeTo: .body)
+                            .foregroundStyle(KithTheme.secondaryOnFill(isDark))
+                            .padding(.vertical, 4)
+                            .frame(maxWidth: .infinity, minHeight: 36)
+                            .overlay(Capsule().strokeBorder(secondary, lineWidth: 1))
+                            .contentShape(Capsule())
+                    }
+                    .accessibilityLabel("No, I didn’t meet \(sighting.contact.firstName)")
+
+                    Button { answer(sighting, met: true) } label: {
+                        Text("Yes, We Met")
+                            .font(.kithBody)
+                            .kithCapCentered(17, relativeTo: .body)
+                            .foregroundStyle(KithTheme.canvas(isDark))
+                            .padding(.vertical, 4)
+                            .frame(maxWidth: .infinity, minHeight: 36)
+                            .background(ink, in: Capsule())
+                    }
+                    .accessibilityHint("Logs it as time with \(sighting.contact.firstName)")
+                }
+                .buttonStyle(PressableButtonStyle())
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .padding(16)
+        .background(card, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+    }
+
+    private func answer(_ sighting: Sighting, met: Bool) {
+        sightingPing += 1
+        withAnimation(reduceMotion ? .easeOut(duration: 0.2) : .spring(response: 0.5, dampingFraction: 0.86)) {
+            if met { store.confirm(sighting) } else { store.dismiss(sighting) }
+        }
+        // A yes becomes the newest hangout, so the reflection card asks about it.
+        if met { loadDraft() }
+    }
+
     /// Recent's one action item: the newest hangout, while it still wants a
     /// reflection. Deliberately not "any unanswered hangout" — older ones are
     /// reflected on from their own page, and treating them as action items here
@@ -465,7 +547,7 @@ struct TodayView: View {
     /// its row. It also keeps this in step with `answer()`, which writes to the
     /// newest entry.
     private var awaitingReflection: RecentHangout? {
-        recents.first.flatMap { $0.feelings.isEmpty ? $0 : nil }
+        recents.first.flatMap { $0.feelings.isEmpty && !$0.reflectionDismissed ? $0 : nil }
     }
 
     /// The newest hangout with each friend, the ones still wanting a reflection
@@ -490,8 +572,8 @@ struct TodayView: View {
         let friend = hangout.contact
         let wantsWords = draftFeelings.contains(.somethingElse)
 
-        return VStack(alignment: .leading, spacing: 12) {
-            HStack(spacing: 10) {
+        return VStack(alignment: .leading, spacing: 14) {
+            HStack(spacing: 12) {
                 ContactAvatar(contact: friend, diameter: 60, badgeRing: card)
 
                 VStack(alignment: .leading, spacing: 5) {
@@ -500,12 +582,25 @@ struct TodayView: View {
                         .foregroundStyle(ink)
                     Text(hangout.detail)
                         .font(.kithCaption)
-                        .foregroundStyle(KithTheme.recentMeta)
+                        .foregroundStyle(KithTheme.secondary(isDark))
                         .fixedSize(horizontal: false, vertical: true)
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
+
+                Button(action: dismissReflection) {
+                    Image(systemName: "xmark")
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundStyle(KithTheme.secondary(isDark))
+                        .frame(width: 32, height: 32)
+                        .background(KithTheme.canvas(isDark), in: Circle())
+                        .frame(minHeight: 44)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(PressableButtonStyle())
+                .accessibilityLabel("Skip this reflection")
+                .accessibilityHint("Keeps it in your list to answer later")
             }
-            .accessibilityElement(children: .combine)
+            .accessibilityElement(children: .contain)
             .contextMenu {
                 Button("Text \(friend.firstName)", systemImage: "message") {
                     composing = MessageDraft(contact: friend)
@@ -517,7 +612,7 @@ struct TodayView: View {
                 }
             }
 
-            VStack(alignment: .leading, spacing: 15) {
+            VStack(alignment: .leading, spacing: 14) {
                 VStack(alignment: .leading, spacing: 10) {
                     Text("How did your time with \(friend.firstName) feel?")
                         .font(.kithCardTitle)
@@ -540,8 +635,8 @@ struct TodayView: View {
                 }
             }
         }
-        .padding(.horizontal, 10)
-        .padding(.vertical, 12)
+        // Recent's cards share one inset: 16 all round.
+        .padding(16)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(card, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
         .animation(reduceMotion ? .easeOut(duration: 0.2) : .spring(response: 0.45, dampingFraction: 0.9), value: wantsWords)
@@ -592,6 +687,18 @@ struct TodayView: View {
     }
 
     /// Files the answer into the entry; the card shrinks into its row.
+    /// Steps the prompt aside without answering it. The hangout keeps its
+    /// Needs Reflection pill and settles into the strip like any other row.
+    private func dismissReflection() {
+        guard !store.hangouts.isEmpty else { return }
+        settling?.cancel()
+        withAnimation(reduceMotion ? .easeOut(duration: 0.2) : .spring(response: 0.55, dampingFraction: 0.86)) {
+            store.hangouts[0].reflectionDismissed = true
+        }
+        draftFeelings = []
+        draftReflection = ""
+    }
+
     private func answer() {
         guard !store.hangouts.isEmpty, !draftFeelings.isEmpty else { return }
         UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
@@ -770,7 +877,10 @@ extension RecentHangout {
                     startTime: plan.1,
                     place: "\(plan.3), Lafayette",
                     photos: Self.photos(at: plan.3, seed: step),
-                    feelings: round == 0 ? answered[contact.firstName] ?? [] : []
+                    feelings: round == 0 ? answered[contact.firstName] ?? [] : [],
+                    // Enough of them reach the month recap that it reads as a
+                    // real list rather than a couple of entries.
+                    highlightIn: step % 3 == 0 ? [.month] : []
                 ))
                 step += 1
             }
