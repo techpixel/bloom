@@ -112,27 +112,17 @@ enum DemoCast {
 
     static let circle: [KithContact] = [nora, leo]
 
-    static let requests: [FriendRequest] = [
-        FriendRequest(
-            contact: KithContact(name: "Ari Brooks", face: initials("Ari Brooks", .apricot)),
-            connection: .friendsWith("Nora", andOthers: true),
-            // It pops in as you arrive, so it reads as just sent.
-            received: .now.addingTimeInterval(-60)
-        )
-    ]
+    /// Nobody else: Nora and Leo are the judge's only friends, so there are
+    /// no requests, suggestions or contacts to invite anywhere in the app.
+    static let requests: [FriendRequest] = []
 
     static let mutuals = ["Nora", "Leo"]
 
     // MARK: - Onboarding
 
-    /// "Find your friends": Nora and Leo are on Bloom to add; the rest are
-    /// contacts to invite.
+    /// "Find your friends": just Nora and Leo, both on Bloom.
     static let onboardingFriends: [Friend] = [
         Friend(name: "Nora Patel", face: .tint(FriendBlob.rose.color), isOnKith: true),
-        Friend(name: "Leo Ortiz", face: .tint(FriendBlob.sky.color), isOnKith: true),
-        Friend(name: "Alicia Zhou", face: .tint(FriendBlob.lavender.color)),
-        Friend(name: "Gabriel Lopez", face: .tint(FriendBlob.mint.color)),
-        Friend(name: "Mia Singh", face: .tint(FriendBlob.butter.color)),
-        Friend(name: "Jordan Tan", face: .tint(FriendBlob.periwinkle.color))
+        Friend(name: "Leo Ortiz", face: .tint(FriendBlob.sky.color), isOnKith: true)
     ]
 }

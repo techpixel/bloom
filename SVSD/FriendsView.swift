@@ -787,8 +787,8 @@ extension FriendSuggestion {
     private static let slate = Color(red: 0.580, green: 0.580, blue: 0.580)  // #949494
     private static let nearBlack = Color(red: 0.067, green: 0.067, blue: 0.067) // #111111
 
-    /// The judge's build leaves out the comps' real people and the second Leo.
-    static let sample = comps.filter { !DemoCast.isJudge || !["Jadden Picardal", "Leo Chen"].contains($0.contact.name) }
+    /// The judge's build suggests no one: it has only its two friends.
+    static let sample = DemoCast.isJudge ? [] : comps
 
     private static let comps = [
         FriendSuggestion(
@@ -822,6 +822,8 @@ extension FriendSuggestion {
     /// The next `size` suggestions after the first `count`. The comp's six come
     /// first, then the made-up people, until they run out.
     static func page(after count: Int, size: Int = 20) -> [FriendSuggestion] {
+        // The judge's build has no one beyond its two friends to suggest.
+        guard !DemoCast.isJudge else { return [] }
         let start = max(0, count - sample.count)
         let end = min(start + size, SamplePeople.count)
         guard start < end else { return [] }

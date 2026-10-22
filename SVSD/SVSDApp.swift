@@ -29,6 +29,10 @@ struct SVSDApp: App {
 /// is laid out exactly as it is on the phone, with no title in the bar.
 enum MacWindow {
     static let size = CGSize(width: 393, height: 852)
+    /// An iPhone 16's safe area: the Dynamic Island's band at the top and the
+    /// home indicator's at the bottom. Giving the window the same insets makes
+    /// every screen sit exactly where it does on the phone.
+    static let phoneInsets = UIEdgeInsets(top: 59, left: 0, bottom: 34, right: 0)
 
     static func fitToPhone() {
         for scene in UIApplication.shared.connectedScenes {
@@ -37,6 +41,24 @@ enum MacWindow {
             windowScene.sizeRestrictions?.maximumSize = size
             windowScene.titlebar?.titleVisibility = .hidden
             windowScene.titlebar?.toolbar = nil
+        }
+        // Once the window has its own insets (the title bar's), top them up
+        // to the phone's rather than adding on top.
+        DispatchQueue.main.async {
+            for scene in UIApplication.shared.connectedScenes {
+                guard let windowScene = scene as? UIWindowScene else { continue }
+                for window in windowScene.windows {
+                    guard let root = window.rootViewController else { continue }
+                    let own = window.safeAreaInsets
+                    let added = root.additionalSafeAreaInsets
+                    root.additionalSafeAreaInsets = UIEdgeInsets(
+                        top: max(0, phoneInsets.top - (own.top - added.top)),
+                        left: 0,
+                        bottom: max(0, phoneInsets.bottom - (own.bottom - added.bottom)),
+                        right: 0
+                    )
+                }
+            }
         }
     }
 }

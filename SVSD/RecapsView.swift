@@ -893,22 +893,12 @@ private extension RecapsView {
         }
     }
 
-    /// The judge's build: Nora and Leo, with a few people you saw once this
-    /// week, and the same outer ring for the month.
+    /// The judge's build: Nora and Leo, and nobody else.
     private static func judgeListed(_ spot: (CGFloat, CGFloat, CGFloat) -> (center: CGPoint, diameter: CGFloat)) -> [RecapBubble] {
-        let weekSpots = [spot(96, 214, 62), spot(86, 352, 58), spot(292, 380, 64)]
-        let ring = ringBubbles(spot).enumerated().map { index, bubble in
-            var bubble = bubble
-            if index < weekSpots.count {
-                bubble.spots[.week] = weekSpots[index]
-                bubble.times[.week] = 1
-            }
-            return bubble
-        }
         return [
             RecapBubble(contact: DemoCast.nora, spots: [.week: spot(190, 285, 148), .month: spot(0, 0, 0)], times: [.week: 3, .month: 9], tilt: -2),
             RecapBubble(contact: DemoCast.leo, spots: [.week: spot(298, 214, 106), .month: spot(0, 0, 0)], times: [.week: 2, .month: 6], tilt: 3)
-        ] + ring
+        ]
     }
 
     private static let outerRing: [(name: String, times: Int)] = [
