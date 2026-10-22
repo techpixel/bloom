@@ -173,7 +173,6 @@ struct FriendsView: View {
                         .padding(12)
                         .background(card, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
                     }
-                    .padding(.top, 40 * scale)
                     .transition(.asymmetric(
                         insertion: .scale(scale: 0.92, anchor: .top).combined(with: .opacity),
                         removal: .opacity
@@ -193,7 +192,7 @@ struct FriendsView: View {
                         // Rows stop at the box edge instead of painting past it.
                         .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
                     }
-                    .padding(.top, (visibleRequests.isEmpty ? 40 : 18) * scale)
+                    .padding(.top, visibleRequests.isEmpty ? 0 : 18 * scale)
                 }
 
                 if visibleCircle.isEmpty && visibleRequests.isEmpty && visibleSuggestions.isEmpty {
@@ -207,14 +206,13 @@ struct FriendsView: View {
             // Clear the floating tab bar, so the last row isn't under its glass.
             .padding(.bottom, 96)
             }
-            // A soft edge where the lists slide under your circle.
-            .mask {
-                VStack(spacing: 0) {
-                    LinearGradient(colors: [.clear, .black], startPoint: .top, endPoint: .bottom)
-                        .frame(height: 14)
-                    Rectangle()
-                }
-            }
+            // A clean edge at the top of the lists: rows disappear at the line
+            // where the first heading starts, never fading up into the
+            // names under your circle.
+            .clipped()
+            // The gap under your circle sits outside the scroll, so the clip
+            // line is the top of the first heading.
+            .padding(.top, 40 * scale)
         }
         .frame(maxHeight: .infinity, alignment: .top)
         .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { screenWidth = $0 }
@@ -427,7 +425,7 @@ struct FriendsView: View {
     private func requestRow(_ request: FriendRequest) -> some View {
         VStack(alignment: .leading, spacing: 3.5) {
             HStack(alignment: .top, spacing: 15) {
-                ContactAvatar(contact: request.contact, diameter: 40, badgeRing: card)
+                ContactAvatar(contact: request.contact, diameter: 40, badgeRing: card, showsBloomBadge: true)
 
                 nameStack(request.contact, connection: request.connection)
                     .padding(.vertical, 3)
@@ -476,7 +474,7 @@ struct FriendsView: View {
         let contact = suggestion.contact
 
         return HStack(spacing: 10) {
-            ContactAvatar(contact: contact, diameter: 40, badgeRing: card)
+            ContactAvatar(contact: contact, diameter: 40, badgeRing: card, showsBloomBadge: true)
 
             nameStack(contact, connection: suggestion.connection)
                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -611,13 +609,17 @@ struct FriendsView: View {
 
 // MARK: - Avatar
 
-/// A contact's photo or initials, with the iMessage badge for people not on Kith yet.
+/// A contact's photo or initials, with the iMessage badge for people not on
+/// Bloom yet, and (where asked) the small Bloom badge for people who are.
 struct ContactAvatar: View {
     let contact: KithContact
     let diameter: CGFloat
     var initialsFont: Font = .kithInitialsSmall
     /// The badge's outline matches whatever the avatar sits on.
     var badgeRing: Color = .clear
+    /// The Bloom mark on people already here, as onboarding's friend list
+    /// draws it. Off where everyone shown is on Bloom anyway.
+    var showsBloomBadge = false
 
     var body: some View {
         face
@@ -632,6 +634,16 @@ struct ContactAvatar: View {
                         .foregroundStyle(.white)
                         .frame(width: 14, height: 14)
                         .background(KithTheme.messagesGreen, in: Circle())
+                        .overlay(Circle().strokeBorder(badgeRing, lineWidth: 1.5))
+                } else if showsBloomBadge {
+                    Image("BloomMark")
+                        .renderingMode(.template)
+                        .resizable()
+                        .scaledToFit()
+                        .frame(width: 8)
+                        .foregroundStyle(KithTheme.canvas(false))
+                        .frame(width: 14, height: 14)
+                        .background(KithTheme.ink(false), in: Circle())
                         .overlay(Circle().strokeBorder(badgeRing, lineWidth: 1.5))
                 }
             }

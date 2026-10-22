@@ -22,6 +22,10 @@ struct ProfileView: View {
     /// The photo you chose, if any; the comp's photo otherwise.
     @State private var customPhoto: UIImage? = ProfilePhotoStore.load()
     @State private var draftName = ""
+    /// The editor's working copy of the photo; nothing changes until Save.
+    @State private var draftPhoto: UIImage?
+    @State private var draftRemoved = false
+    @State private var confirmingDiscard = false
     @State private var confirmingLogOut = false
     /// How many Google calendars are connected; 0 is not connected.
     @AppStorage("calendar.google") private var googleCalendars = 0
@@ -185,64 +189,120 @@ struct ProfileView: View {
         .accessibilityLabel("Edit profile")
     }
 
-    /// Name and photo together, so neither needs a pencil of its own and the
-    /// page doesn't reflow underneath you while you type.
+    /// Name and photo together, as a draft: a preview at the top shows what
+    /// you'll get, Save applies it, Cancel (or swiping down with nothing
+    /// changed) leaves your profile exactly as it was.
     private var profileEditor: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            Text("Edit profile")
-                .font(.kithHeading)
-                .foregroundStyle(ink)
-                .accessibilityAddTraits(.isHeader)
+        NavigationStack {
+            VStack(spacing: 20) {
+                draftPreview
+                    .padding(.top, 4)
 
-            VStack(alignment: .leading, spacing: 6) {
-                Text("Name")
-                    .font(.kithCaption)
-                    .foregroundStyle(secondary)
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("Name")
+                        .font(.kithCaption)
+                        .foregroundStyle(secondary)
 
-                TextField("Your name", text: $draftName)
-                    .font(.kithBody)
-                    .foregroundStyle(ink)
-                    .tint(ink)
-                    .textContentType(.givenName)
-                    .submitLabel(.done)
-                    .onSubmit(saveProfile)
-                    .padding(.horizontal, 14)
-                    .frame(height: 44)
-                    .background(KithTheme.uiFill(isDark), in: Capsule())
-                    .accessibilityLabel("Your name")
+                    TextField("Your name", text: $draftName)
+                        .font(.kithBody)
+                        .foregroundStyle(ink)
+                        .tint(ink)
+                        .textContentType(.givenName)
+                        .submitLabel(.done)
+                        .padding(.horizontal, 14)
+                        .frame(height: 44)
+                        .background(KithTheme.uiFill(isDark), in: Capsule())
+                        .accessibilityLabel("Your name")
+                }
+
+                HStack(spacing: 10) {
+                    editorAction(draftHasPhoto ? "Change Photo" : "Choose Photo") { choosingPhoto = true }
+                    if draftHasPhoto {
+                        editorAction("Remove Photo") {
+                            withAnimation(.easeOut(duration: 0.2)) {
+                                draftPhoto = nil
+                                draftRemoved = true
+                            }
+                        }
+                    }
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+
+                Spacer(minLength: 0)
             }
-
-            HStack(spacing: 10) {
-                editorAction("Choose photo") { choosingPhoto = true }
-                if customPhoto != nil {
-                    editorAction("Remove Photo") { usePhoto(nil) }
+            .padding(.horizontal, 20)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(KithTheme.canvas(isDark).ignoresSafeArea())
+            .navigationTitle("Edit Profile")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Cancel", action: cancelEditing)
+                        .foregroundStyle(ink)
+                }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Save", action: saveProfile)
+                        .fontWeight(.semibold)
+                        .foregroundStyle(ink)
+                        .disabled(!draftChanged || draftName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                 }
             }
-
-            Button(action: saveProfile) {
-                Text("Save")
-                    .font(.kithBody)
-                    .kithCapCentered(17, relativeTo: .body)
-                    .foregroundStyle(KithTheme.canvas(isDark))
-                    .frame(maxWidth: .infinity)
-                    .frame(height: 44)
-                    .background(ink, in: Capsule())
-            }
-            .buttonStyle(PressableButtonStyle())
-            .padding(.top, 4)
-
-            Spacer(minLength: 0)
         }
-        .padding(20)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(KithTheme.canvas(isDark).ignoresSafeArea())
-        .presentationDetents([.height(360)])
+        .presentationDetents([.height(440)])
         .presentationDragIndicator(.visible)
+        // With changes in the draft, a swipe down asks first instead of
+        // silently throwing them away.
+        .interactiveDismissDisabled(draftChanged)
+        .confirmationDialog("Discard your changes?", isPresented: $confirmingDiscard, titleVisibility: .visible) {
+            Button("Discard Changes", role: .destructive) { editingProfile = false }
+            Button("Keep Editing", role: .cancel) {}
+        }
         .photosPicker(isPresented: $choosingPhoto, selection: $pickedPhoto, matching: .images)
         .onChange(of: pickedPhoto) { _, item in
             guard let item else { return }
-            Task { await usePhoto(item) }
+            Task { await loadDraftPhoto(item) }
         }
+    }
+
+    /// The photo and name as they'll look once saved.
+    private var draftPreview: some View {
+        let side: CGFloat = 120
+        return VStack(spacing: 10) {
+            Group {
+                if let draftPhoto {
+                    Image(uiImage: draftPhoto)
+                        .resizable()
+                        .scaledToFill()
+                        .frame(width: side, height: side)
+                        .clipShape(Circle())
+                } else if draftRemoved || ProfilePhotoStore.removed {
+                    ProfilePhotoStore.blank(diameter: side, dark: isDark)
+                } else if DemoCast.isJudge {
+                    ContactAvatar(contact: KithContact(name: draftName, face: DemoCast.initials(draftName, .mint)), diameter: side)
+                } else {
+                    ContactAvatar(contact: KithContact(name: draftName, face: .photo(Self.photo)), diameter: side)
+                }
+            }
+            .transition(.opacity)
+
+            Text(draftName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? " " : draftName)
+                .font(.kithBodyStrong)
+                .foregroundStyle(ink)
+                .lineLimit(1)
+        }
+        .frame(maxWidth: .infinity)
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("Preview")
+    }
+
+    private var draftHasPhoto: Bool {
+        draftPhoto != nil || (!draftRemoved && !ProfilePhotoStore.removed)
+    }
+
+    private var draftChanged: Bool {
+        draftName.trimmingCharacters(in: .whitespacesAndNewlines) != name
+            || draftPhoto !== customPhoto
+            || draftRemoved
     }
 
     private func editorAction(_ title: String, action: @escaping () -> Void) -> some View {
@@ -496,14 +556,6 @@ struct ProfileView: View {
 
     // MARK: - Actions
 
-    private func usePhoto(_ item: PhotosPickerItem) async {
-        defer { pickedPhoto = nil }
-        guard let data = try? await item.loadTransferable(type: Data.self),
-              let image = UIImage(data: data)
-        else { return }
-        usePhoto(image)
-    }
-
     private func usePhoto(_ image: UIImage?) {
         customPhoto = image
         ProfilePhotoStore.save(image)
@@ -513,12 +565,32 @@ struct ProfileView: View {
 
     private func beginEditingProfile() {
         draftName = name
+        draftPhoto = customPhoto
+        draftRemoved = false
         editingProfile = true
+    }
+
+    private func loadDraftPhoto(_ item: PhotosPickerItem) async {
+        defer { pickedPhoto = nil }
+        guard let data = try? await item.loadTransferable(type: Data.self),
+              let image = UIImage(data: data)
+        else { return }
+        withAnimation(.easeOut(duration: 0.2)) {
+            draftPhoto = image
+            draftRemoved = false
+        }
+    }
+
+    private func cancelEditing() {
+        if draftChanged { confirmingDiscard = true } else { editingProfile = false }
     }
 
     private func saveProfile() {
         let trimmed = draftName.trimmingCharacters(in: .whitespacesAndNewlines)
         if !trimmed.isEmpty { name = trimmed }
+        if draftPhoto !== customPhoto || draftRemoved {
+            usePhoto(draftRemoved && draftPhoto == nil ? nil : draftPhoto)
+        }
         editingProfile = false
     }
 }
