@@ -68,6 +68,7 @@ struct TodayView: View {
     /// The entrance plays the first time Home opens each launch, not on every
     /// return to the tab.
     @State private var screenWidth: CGFloat = 393
+    @State private var overviewFriend: KithContact?
     @State private var entered = TodayView.hasEntered
     @State private var friendSectionShown = TodayView.hasEntered
     private static var hasEntered = false
@@ -82,7 +83,12 @@ struct TodayView: View {
 
     // The comp is an iPhone 16 frame: 393 x 852.
     private let designWidth: CGFloat = 393
-    private let cardWidth: CGFloat = 291
+    /// The comp's card is 291 of a 393 frame, with 51 either side. Kept as a
+    /// ratio so a narrower phone scales it down rather than running off the edge.
+    private func cardWidth(in width: CGFloat) -> CGFloat { width * 291 / 393 }
+    private func carouselMargin(in width: CGFloat) -> CGFloat {
+        max(0, (width - cardWidth(in: width)) / 2)
+    }
     /// A recent card, plus a sliver of the next one so the strip reads as scrollable.
     /// One row fills the gutter-to-gutter width less a 28pt peek of the next.
     private func recentCardWidth(in width: CGFloat) -> CGFloat {
@@ -154,16 +160,17 @@ struct TodayView: View {
 
                                 // A new range is a new set of friends: the old cards blur
                                 // out as the new ones blur in, in the same place.
-                                VStack(spacing: 4) {
+                                VStack(spacing: 12) {
                                     ZStack {
                                         carousel
                                             .id(range)
                                             .transition(.blurReplace)
                                     }
 
+                                    // The card's own width, so the two share edges.
                                     if !nudges.isEmpty {
                                         sendButton
-                                            .frame(width: cardWidth - 32)
+                                            .frame(width: cardWidth(in: screenWidth))
                                     }
                                 }
                                 .padding(.top, 12)
@@ -184,6 +191,10 @@ struct TodayView: View {
         }
         .background(KithTheme.canvas(isDark))
         .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { screenWidth = $0 }
+        .drawer(item: $overviewFriend) { friend in
+            FriendRecapView(contact: friend, onBack: { overviewFriend = nil })
+                .environment(store)
+        }
         .task { await playEntrance() }
         .messageSheet($composing)
         .fullScreenCover(item: $planning) { _ in
@@ -308,14 +319,14 @@ struct TodayView: View {
                     LazyHStack(spacing: 12) {
                         ForEach(slots, id: \.self) { slot in
                             nudgeCard(nudges[slot % nudges.count])
-                                .frame(width: cardWidth)
+                                .frame(width: cardWidth(in: screenWidth))
                         }
                     }
                     .scrollTargetLayout()
                 }
                 .scrollTargetBehavior(.viewAligned)
                 .scrollPosition(id: $focusedSlot, anchor: .center)
-                .contentMargins(.horizontal, 51, for: .scrollContent)
+                .contentMargins(.horizontal, carouselMargin(in: screenWidth), for: .scrollContent)
                 // A tick as each card settles, not when the carousel first parks.
                 .sensoryFeedback(.selection, trigger: focusedSlot) { old, new in old != nil && new != nil }
             .onAppear {
@@ -329,7 +340,7 @@ struct TodayView: View {
     /// One friend to see (comp 406:1695): the idea up top, their face in a
     /// glow of their colour, when you last saw them and when you're both free.
     private func nudgeCard(_ nudge: TodayNudge) -> some View {
-        VStack(spacing: 16) {
+        VStack(spacing: 12) {
             // Bloom offers the idea; it never picks for you.
             Text(nudge.idea.prefix(1).uppercased() + nudge.idea.dropFirst())
                 .font(.kithCardTitle)
@@ -349,7 +360,6 @@ struct TodayView: View {
                     .foregroundStyle(secondary)
                     .multilineTextAlignment(.center)
                     .lineLimit(2, reservesSpace: true)
-                    .lineLimit(2, reservesSpace: true)
             }
             .frame(maxWidth: .infinity)
 
@@ -357,25 +367,32 @@ struct TodayView: View {
                 .font(.kithCaptionStrong)
                 .foregroundStyle(KithTheme.suggestionAccent)
                 .multilineTextAlignment(.center)
-                .lineLimit(2, reservesSpace: true)
+                .lineLimit(2)
         }
         .padding(.horizontal, 10)
-        .padding(.vertical, 20)
+        .padding(.vertical, 16)
         .frame(maxWidth: .infinity)
         .background(card, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
-        .accessibilityElement(children: .combine)
+        // Contain, not combine: the face inside is its own button.
+        .accessibilityElement(children: .contain)
     }
 
     /// The friend's colour as a soft, blurred glow behind their face, the
     /// comp's halo, reaching past the photo mostly down and to the left.
+    /// Tapping their face opens their overview.
     private func haloAvatar(_ contact: KithContact) -> some View {
-        ContactAvatar(contact: contact, diameter: 96.664, badgeRing: card)
-            .background {
-                DriftingBlob(blob: contact.blob, length: 150, seed: Double(contact.name.count), wander: 0.025)
-                    .blur(radius: 5)
-                    .offset(x: -3, y: 4)
-            }
-            .padding(.vertical, 2)
+        Button { overviewFriend = contact } label: {
+            ContactAvatar(contact: contact, diameter: 96.664, badgeRing: card)
+                .background {
+                    DriftingBlob(blob: contact.blob, length: 150, seed: Double(contact.name.count), wander: 0.025)
+                        .blur(radius: 5)
+                        .offset(x: -3, y: 4)
+                }
+                .contentShape(Circle())
+        }
+        .buttonStyle(PressableButtonStyle())
+        .accessibilityLabel(contact.name)
+        .accessibilityHint("Opens your time with \(contact.firstName)")
     }
 
     private var sendButton: some View {
@@ -389,8 +406,8 @@ struct TodayView: View {
                 .kithCapCentered(15, relativeTo: .subheadline)
                 .foregroundStyle(KithTheme.canvas(isDark))
                 .frame(maxWidth: .infinity)
-                .frame(height: 50)
-                .background(ink, in: RoundedRectangle(cornerRadius: 25, style: .continuous))
+                .frame(height: 44)
+                .background(ink, in: RoundedRectangle(cornerRadius: 22, style: .continuous))
                 .contentShape(Rectangle())
         }
         .buttonStyle(PressableButtonStyle())

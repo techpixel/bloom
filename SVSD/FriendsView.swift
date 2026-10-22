@@ -87,6 +87,8 @@ struct FriendsView: View {
     #else
     @State private var planning: KithContact?
     #endif
+    @State private var sharing = false
+    @State private var sharePing = 0
     @State private var requestArrived = false
     @State private var requestPing = 0
 
@@ -160,6 +162,10 @@ struct FriendsView: View {
 
             if !visibleCircle.isEmpty {
                 dial
+                    // A new search result is a new dial, parked on its friend
+                    // straight away, rather than the old one spinning round to it.
+                    .id(visibleCircle.map(\.id))
+                    .transaction { $0.animation = nil }
                     .padding(.top, 27 * scale)
             }
 
@@ -167,10 +173,10 @@ struct FriendsView: View {
             VStack(alignment: .leading, spacing: 0) {
                 if !visibleRequests.isEmpty {
                     section("Friend Requests") {
-                        VStack(spacing: 16) {
+                        VStack(spacing: 22) {
                             ForEach(visibleRequests) { requestRow($0) }
                         }
-                        .padding(12)
+                        .padding(16)
                         .background(card, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
                     }
                     .transition(.asymmetric(
@@ -181,18 +187,16 @@ struct FriendsView: View {
 
                 if !visibleSuggestions.isEmpty {
                     section("People You Might Know") {
-                        LazyVStack(spacing: 12) {
+                        LazyVStack(spacing: 14) {
                             ForEach(visibleSuggestions) { suggestion in
                                 suggestionRow(suggestion)
                                     .onAppear { loadMoreIfLast(suggestion) }
                             }
                         }
-                        .padding(12)
+                        .padding(16)
                         .background(card, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
-                        // Rows stop at the box edge instead of painting past it.
-                        .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
                     }
-                    .padding(.top, visibleRequests.isEmpty ? 0 : 18 * scale)
+                    .padding(.top, visibleRequests.isEmpty ? 0 : 28 * scale)
                 }
 
                 if visibleCircle.isEmpty && visibleRequests.isEmpty && visibleSuggestions.isEmpty {
@@ -234,6 +238,15 @@ struct FriendsView: View {
             requestPing += 1
         }
         .sensoryFeedback(.impact(weight: .light), trigger: requestPing)
+        .sensoryFeedback(.impact(weight: .medium), trigger: sharePing)
+        .sheet(isPresented: $sharing) {
+            ShareDrawer(items: [
+                "I’m on Bloom, an app for spending more real time with friends. Add me:",
+                URL(string: "https://bloom.app/add/\(Self.inviteHandle)")!
+            ])
+            .presentationDetents([.medium, .large])
+            .ignoresSafeArea()
+        }
         .drawer(item: $overview) { friend in
             FriendRecapView(contact: friend, onBack: { overview = nil })
                 .environment(store)
@@ -256,17 +269,12 @@ struct FriendsView: View {
                 Spacer(minLength: 0)
 
                 HStack(spacing: 9.5) {
-                    // The real iOS share sheet, with an invite to add you.
-                    ShareLink(
-                        item: URL(string: "https://bloom.app/add/\(Self.inviteHandle)")!,
-                        subject: Text("Add me on Bloom"),
-                        message: Text("I’m on Bloom, an app for spending more real time with friends. Add me:")
-                    ) {
-                        roundIcon("ShareIcon")
+                    // The real iOS share sheet, with an invite to add you, rising
+                    // from the bottom as a drawer rather than out of the button.
+                    roundIconButton("ShareIcon", label: "Share your profile") {
+                        sharePing += 1
+                        sharing = true
                     }
-                    .buttonStyle(PressableButtonStyle())
-                    .accessibilityLabel("Share your profile")
-                    roundIconButton("QRCodeIcon", label: "Show your QR code") { /* TODO: QR code */ }
                 }
             }
 
@@ -346,9 +354,6 @@ struct FriendsView: View {
         // The strip's insets follow the width, which lands after the first pass
         // and leaves the strip parked on the first friend.
         .onChange(of: screenWidth) { recenter() }
-        // Accepting a request or searching changes who's on the dial; stay on
-        // the same friend if they're still there.
-        .onChange(of: visibleCircle.map(\.id)) { recenter() }
         .frame(height: dialHeight)
     }
 
@@ -423,9 +428,9 @@ struct FriendsView: View {
     // MARK: - Requests
 
     private func requestRow(_ request: FriendRequest) -> some View {
-        VStack(alignment: .leading, spacing: 3.5) {
+        VStack(alignment: .leading, spacing: 12) {
             HStack(alignment: .top, spacing: 15) {
-                ContactAvatar(contact: request.contact, diameter: 40, badgeRing: card, showsBloomBadge: true)
+                ContactAvatar(contact: request.contact, diameter: 48, badgeRing: card, showsBloomBadge: true)
 
                 nameStack(request.contact, connection: request.connection)
                     .padding(.vertical, 3)
@@ -441,29 +446,29 @@ struct FriendsView: View {
             HStack(spacing: 10) {
                 Button { respond(to: request, accept: false) } label: {
                     Text("Decline")
-                        .font(.kithCaption)
-                        .kithCapCentered(13, relativeTo: .footnote)
-                        .foregroundStyle(KithTheme.canvas(isDark))
+                        .font(.kithBody)
+                        .kithCapCentered(17, relativeTo: .body)
+                        .foregroundStyle(KithTheme.secondaryOnFill(isDark))
                         .padding(.vertical, 4)
-                        .frame(maxWidth: .infinity, minHeight: 31)
-                        .background(ink, in: Capsule())
+                        .frame(maxWidth: .infinity, minHeight: 44)
+                        .overlay(Capsule().strokeBorder(secondary, lineWidth: 1))
+                        .contentShape(Capsule())
                 }
                 .accessibilityLabel("Decline \(request.contact.firstName)")
 
                 Button { respond(to: request, accept: true) } label: {
                     Text("Accept")
-                        .font(.kithCaption)
-                        .kithCapCentered(13, relativeTo: .footnote)
-                        .foregroundStyle(KithTheme.secondaryOnFill(isDark))
+                        .font(.kithBody)
+                        .kithCapCentered(17, relativeTo: .body)
+                        .foregroundStyle(KithTheme.canvas(isDark))
                         .padding(.vertical, 4)
-                        .frame(maxWidth: .infinity, minHeight: 31)
-                        .overlay(Capsule().strokeBorder(secondary, lineWidth: 1))
-                        .contentShape(Capsule())
+                        .frame(maxWidth: .infinity, minHeight: 44)
+                        .background(ink, in: Capsule())
                 }
                 .accessibilityLabel("Accept \(request.contact.firstName)")
             }
             .buttonStyle(PressableButtonStyle())
-            .padding(.leading, 40 + 15)
+            .padding(.leading, 48 + 15)
         }
         .accessibilityElement(children: .contain)
     }
@@ -473,15 +478,15 @@ struct FriendsView: View {
     private func suggestionRow(_ suggestion: FriendSuggestion) -> some View {
         let contact = suggestion.contact
 
-        return HStack(spacing: 10) {
-            ContactAvatar(contact: contact, diameter: 40, badgeRing: card, showsBloomBadge: true)
+        return HStack(spacing: 12) {
+            ContactAvatar(contact: contact, diameter: 48, badgeRing: card, showsBloomBadge: true)
 
             nameStack(contact, connection: suggestion.connection)
                 .frame(maxWidth: .infinity, alignment: .leading)
 
             requestButton(for: contact)
         }
-        .frame(minHeight: 44)
+        .frame(minHeight: 60)
     }
 
     /// Says what it does: people on Bloom get a friend request they have to
@@ -506,9 +511,9 @@ struct FriendsView: View {
                 .kithCapCentered(13, relativeTo: .footnote)
                 .foregroundStyle(sent ? KithTheme.secondaryOnFill(isDark) : KithTheme.canvas(isDark))
                 .lineLimit(1)
-                .padding(.horizontal, 12)
-                .frame(minWidth: 86)
-                .frame(height: 30)
+                .padding(.horizontal, 14)
+                .frame(minWidth: 96)
+                .frame(height: 38)
                 .background {
                     if sent {
                         Capsule().strokeBorder(secondary, lineWidth: 1)
@@ -817,4 +822,21 @@ extension FriendSuggestion {
 
 #Preview {
     MainTabView()
+}
+
+/// The system share sheet, hosted in a sheet so it slides up from the bottom
+/// like every other drawer in Bloom.
+struct ShareDrawer: UIViewControllerRepresentable {
+    @Environment(\.dismiss) private var dismiss
+    let items: [Any]
+
+    func makeUIViewController(context: Context) -> UIActivityViewController {
+        let controller = UIActivityViewController(activityItems: items, applicationActivities: nil)
+        // Sharing or cancelling closes the drawer too, not just the sheet inside it.
+        let close = dismiss
+        controller.completionWithItemsHandler = { _, _, _, _ in close() }
+        return controller
+    }
+
+    func updateUIViewController(_ controller: UIActivityViewController, context: Context) {}
 }

@@ -135,9 +135,6 @@ struct MeetupDetailView: View {
             }
             .scrollDismissesKeyboard(.interactively)
 
-            KithBackButton(action: onBack)
-                .padding(.leading, 12.25)
-                .padding(.top, 29 * scale)
         }
         .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { screenWidth = $0 }
         .animation(reduceMotion ? nil : .spring(response: 0.38, dampingFraction: 0.86), value: offersToName)
@@ -407,19 +404,13 @@ struct MeetupDetailView: View {
     /// Comp 69:869: how it felt as tags you can change here, then your notes.
     private var reflectionSection: some View {
         VStack(alignment: .leading, spacing: 12) {
-            VStack(alignment: .leading, spacing: 3) {
-                Text("Reflection")
-                    .font(KithType.font(.w130, 14, .subheadline))
-                    .foregroundStyle(ink)
-                    .accessibilityAddTraits(.isHeader)
-                Text("Only you can see this.")
-                    .font(.kithFine)
-                    .foregroundStyle(secondary)
-            }
+            (Text("Reflection").font(.kithCardTitle).foregroundStyle(ink)
+                + Text(" (only you can see this)").font(.kithSecondary).foregroundStyle(secondary))
+                .accessibilityAddTraits(.isHeader)
 
             VStack(alignment: .leading, spacing: 5) {
                 Text("Our time together felt:")
-                    .font(.kithFine)
+                    .font(.kithCaption)
                     .foregroundStyle(secondary)
 
                 FlowLayout(spacing: 6, lineSpacing: -4) {
@@ -432,7 +423,7 @@ struct MeetupDetailView: View {
                         } label: {
                             FeelingTag(
                                 feeling.rawValue,
-                                fill: on ? KithTheme.feelingSelected : KithTheme.uiFill(isDark),
+                                fill: on ? feeling.pillFill : KithTheme.uiFill(isDark),
                                 text: on ? nil : secondary,
                                 large: true
                             )
@@ -444,12 +435,13 @@ struct MeetupDetailView: View {
                         .accessibilityAddTraits(on ? .isSelected : [])
                     }
                 }
+                .padding(.leading, -3)
                 .sensoryFeedback(.selection, trigger: hangout.feelings)
             }
 
             VStack(alignment: .leading, spacing: 5) {
                 Text("Notes")
-                    .font(.kithFine)
+                    .font(.kithCaption)
                     .foregroundStyle(secondary)
 
                 ReflectionField(text: $hangout.reflection, minHeight: 94, fill: KithTheme.suggestionCard(isDark), cornerRadius: 6)
@@ -486,10 +478,13 @@ struct MeetupDetailView: View {
 
             Spacer(minLength: 0)
         }
-        .padding(20)
+        .padding(.horizontal, 20)
+        .padding(.bottom, 20)
+        // Clear of the drawer handle, so the title doesn't sit right under it.
+        .padding(.top, 34)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(KithTheme.canvas(isDark).ignoresSafeArea())
-        .presentationDetents([.height(400)])
+        .presentationDetents([.height(420)])
         .presentationDragIndicator(.visible)
     }
 
@@ -677,7 +672,7 @@ struct FeelingChips: View {
                         .foregroundStyle(KithTheme.ink(isDark))
                         .padding(.horizontal, 11.7)
                         .padding(.vertical, 7.8)
-                        .background(on ? KithTheme.feelingSelected : KithTheme.canvas(isDark), in: Capsule())
+                        .background(on ? feeling.pillFill : KithTheme.canvas(isDark), in: Capsule())
                         .contentShape(Capsule())
                 }
                 .buttonStyle(PressableButtonStyle())
@@ -685,6 +680,9 @@ struct FeelingChips: View {
                 .transition(.opacity.combined(with: .scale(scale: 0.9)))
             }
         }
+        // A capsule's round end reads as inset, so the row hangs 3pt past the
+        // text edge above it to look lined up.
+        .padding(.leading, -3)
         .sensoryFeedback(.selection, trigger: selected)
     }
 }

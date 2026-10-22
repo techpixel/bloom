@@ -165,7 +165,7 @@ struct RecapsView: View {
     private var cluster: some View {
         let bubbles = Self.bubbles
 
-        return TimelineView(.animation(minimumInterval: 1 / 60, paused: reduceMotion)) { timeline in
+        return TimelineView(.animation(minimumInterval: 1 / 60, paused: reduceMotion || frozenAt != nil)) { timeline in
             let time = reduceMotion ? 0 : (frozenAt ?? (timeline.date.timeIntervalSinceReferenceDate - floatShift))
             ZStack(alignment: .topLeading) {
                 ForEach(Array(bubbles.enumerated()), id: \.element.id) { index, bubble in
@@ -203,6 +203,20 @@ struct RecapsView: View {
                 if let frozen = frozenAt {
                     floatShift = Date().timeIntervalSinceReferenceDate - frozen
                     frozenAt = nil
+                }
+
+                // A clear vertical throw swaps the range instead of panning:
+                // up for the wider view, down for the narrower one.
+                let drop = value.predictedEndTranslation
+                if abs(drop.height) > 90, abs(drop.height) > abs(drop.width) * 1.5 {
+                    let wanted: RecapPeriod = drop.height < 0 ? .month : .week
+                    if wanted != period {
+                        withAnimation(reduceMotion ? nil : .spring(response: 0.55, dampingFraction: 0.82)) {
+                            period = wanted
+                            pan = .zero
+                        }
+                        return
+                    }
                 }
                 let range = panRange
                 let thrown = CGSize(
@@ -439,9 +453,6 @@ struct FriendRecapView: View {
                 .padding(.bottom, 40)
             }
 
-            KithBackButton(action: onBack)
-                .padding(.leading, 12.25)
-                .padding(.top, 29 * scale)
         }
         .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { screenWidth = $0 }
         .fullScreenCover(isPresented: Binding(get: { viewingPhoto != nil }, set: { if !$0 { viewingPhoto = nil } })) {
@@ -520,7 +531,7 @@ struct FriendRecapView: View {
                             )
                         } else {
                             ForEach(feelings) { feeling in
-                                FeelingTag(feeling.rawValue, fill: KithTheme.feelingSelected)
+                                FeelingTag(feeling.rawValue, fill: feeling.pillFill)
                             }
                         }
                     }
@@ -660,7 +671,7 @@ struct HangoutRow: View {
                             )
                         } else {
                             ForEach(feelings) { feeling in
-                                FeelingTag(feeling.rawValue, fill: KithTheme.feelingSelected)
+                                FeelingTag(feeling.rawValue, fill: feeling.pillFill)
                             }
                         }
                     }
@@ -723,7 +734,8 @@ struct FeelingTag: View {
     }
 }
 
-/// Your own photo, as Profile shows it: the one you picked, or the comp's.
+/// Your own photo, as Profile shows it: the one you picked, or the empty
+/// contact silhouette until you do.
 struct YourAvatar: View {
     @AppStorage("profile.name") private var name = DemoCast.placeholderName
     var diameter: CGFloat
@@ -735,18 +747,8 @@ struct YourAvatar: View {
                 .scaledToFill()
                 .frame(width: diameter, height: diameter)
                 .clipShape(Circle())
-        } else if ProfilePhotoStore.removed {
-            ProfilePhotoStore.blank(diameter: diameter, dark: false)
-        } else if DemoCast.isJudge {
-            ContactAvatar(contact: KithContact(name: name, face: DemoCast.initials(name, .mint)), diameter: diameter)
         } else {
-            ContactAvatar(
-                contact: KithContact(
-                    name: name,
-                    face: .photo(Portrait(asset: "ProfilePhoto", width: 1.0105, height: 1.3474, x: 0.0053, y: 0.1737))
-                ),
-                diameter: diameter
-            )
+            ProfilePhotoStore.blank(diameter: diameter, dark: false)
         }
     }
 }

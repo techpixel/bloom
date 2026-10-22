@@ -49,8 +49,6 @@ struct ProfileView: View {
     private var gutter: CGFloat { 20 * scale }
     private var photoSize: CGFloat { 192 * scale }
 
-    /// Where the comp crops the photo inside its circle.
-    private static let photo = Portrait(asset: "ProfilePhoto", width: 1.0105, height: 1.3474, x: 0.0053, y: 0.1737)
 
     var body: some View {
         ScrollView {
@@ -69,7 +67,7 @@ struct ProfileView: View {
                 nameRow
                     .padding(.top, 36 * scale)
 
-                VStack(alignment: .leading, spacing: 24 * scale) {
+                VStack(alignment: .leading, spacing: 32 * scale) {
                     notifications
                     sharing
                     calendars
@@ -142,13 +140,9 @@ struct ProfileView: View {
                     .scaledToFill()
                     .frame(width: photoSize, height: photoSize)
                     .clipShape(Circle())
-            } else if ProfilePhotoStore.removed {
-                ProfilePhotoStore.blank(diameter: photoSize, dark: isDark)
-            } else if DemoCast.isJudge {
-                // No stand-in face in the judge's build: your initials until you pick a photo.
-                ContactAvatar(contact: KithContact(name: name, face: DemoCast.initials(name, .mint)), diameter: photoSize)
             } else {
-                ContactAvatar(contact: KithContact(name: name, face: .photo(Self.photo)), diameter: photoSize)
+                // No photo yet: an empty contact silhouette, never a stand-in face.
+                ProfilePhotoStore.blank(diameter: photoSize, dark: isDark)
             }
         }
         .background {
@@ -275,12 +269,8 @@ struct ProfileView: View {
                         .scaledToFill()
                         .frame(width: side, height: side)
                         .clipShape(Circle())
-                } else if draftRemoved || ProfilePhotoStore.removed {
-                    ProfilePhotoStore.blank(diameter: side, dark: isDark)
-                } else if DemoCast.isJudge {
-                    ContactAvatar(contact: KithContact(name: draftName, face: DemoCast.initials(draftName, .mint)), diameter: side)
                 } else {
-                    ContactAvatar(contact: KithContact(name: draftName, face: .photo(Self.photo)), diameter: side)
+                    ProfilePhotoStore.blank(diameter: side, dark: isDark)
                 }
             }
             .transition(.opacity)
@@ -295,9 +285,7 @@ struct ProfileView: View {
         .accessibilityLabel("Preview")
     }
 
-    private var draftHasPhoto: Bool {
-        draftPhoto != nil || (!draftRemoved && !ProfilePhotoStore.removed)
-    }
+    private var draftHasPhoto: Bool { draftPhoto != nil }
 
     private var draftChanged: Bool {
         draftName.trimmingCharacters(in: .whitespacesAndNewlines) != name
@@ -448,7 +436,7 @@ struct ProfileView: View {
     }
 
     private func section<Rows: View>(_ title: String, @ViewBuilder rows: () -> Rows) -> some View {
-        VStack(alignment: .leading, spacing: 10) {
+        VStack(alignment: .leading, spacing: 14) {
             Text(title)
                 .font(.kithBodyStrong)
                 .foregroundStyle(ink)
@@ -475,8 +463,8 @@ struct ProfileView: View {
             rowLabel(icon: icon, title: title, detail: detail)
         }
         .tint(KithTheme.overlap)
-        .padding(.horizontal, 12)
-        .padding(.vertical, 12)
+        .padding(.horizontal, 14)
+        .padding(.vertical, 18)
         .disabled(blocked)
         .opacity(blocked ? 0.45 : 1)
         .accessibilityHint(blocked ? "Turn on push notifications first" : "")
@@ -503,8 +491,8 @@ struct ProfileView: View {
                         .accessibilityHidden(true)
                 }
             }
-            .padding(.horizontal, 12)
-            .padding(.vertical, 12)
+            .padding(.horizontal, 14)
+            .padding(.vertical, 18)
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
@@ -617,14 +605,16 @@ enum ProfilePhotoStore {
         set { UserDefaults.standard.set(newValue, forKey: "profile.photoRemoved") }
     }
 
-    /// An empty circle with a quiet silhouette: no photo yet.
+    /// No photo yet: the contact silhouette, secondary on UI fill, as iOS
+    /// draws a contact without a picture.
     static func blank(diameter: CGFloat, dark: Bool) -> some View {
         Circle()
             .fill(KithTheme.uiFill(dark))
             .overlay(
                 Image(systemName: "person.fill")
-                    .font(.system(size: diameter * 0.36))
-                    .foregroundStyle(KithTheme.secondary(dark).opacity(0.5))
+                    .font(.system(size: diameter * 0.42))
+                    .foregroundStyle(KithTheme.secondary(dark))
+                    .offset(y: diameter * 0.04)
             )
             .frame(width: diameter, height: diameter)
             .accessibilityLabel("No photo")

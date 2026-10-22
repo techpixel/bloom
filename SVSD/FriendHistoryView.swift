@@ -32,19 +32,13 @@ struct FriendHistoryView: View {
             KithTheme.canvas(isDark).ignoresSafeArea()
 
             VStack(spacing: 0) {
-                ZStack {
-                    Text("History")
-                        .font(.kithHeading)
-                        .foregroundStyle(ink)
-                        .accessibilityAddTraits(.isHeader)
-
-                    HStack {
-                        KithBackButton(action: onBack)
-                        Spacer(minLength: 0)
-                    }
-                }
-                .padding(.horizontal, 12.25)
-                .padding(.top, 20 * scale)
+                Text("History")
+                    .font(.kithHeading)
+                    .foregroundStyle(ink)
+                    .accessibilityAddTraits(.isHeader)
+                    .frame(maxWidth: .infinity)
+                    .padding(.horizontal, 12.25)
+                    .padding(.top, 20 * scale)
 
                 ScrollView(.vertical, showsIndicators: false) {
                 VStack(alignment: .leading, spacing: 0) {
