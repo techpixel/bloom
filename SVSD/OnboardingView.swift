@@ -446,8 +446,9 @@ struct OnboardingView: View {
         // the welcome screen it doesn't travel: the seed pops up where it sits.
         .offset(x: leavingWelcome ? 0 : blobDrift, y: -keyboardLift(in: size) * 0.45)
         .scaleEffect(step == .welcome ? 0.2 : 1)
-        // The photo step has your face where the blob would be.
-        .opacity(step == .welcome || step == .profilePhoto ? 0 : 1)
+        // The photo step, and the welcome after it once you've picked one,
+        // have your face where the blob would be.
+        .opacity(step == .welcome || step == .profilePhoto || (step == .celebrate && profilePhoto != nil) ? 0 : 1)
         .animation(reduceMotion ? .easeOut(duration: 0.2) : .spring(response: 0.5, dampingFraction: 0.62), value: step == .welcome)
         .animation(reduceMotion ? nil : .spring(response: 0.34, dampingFraction: 0.8), value: blobStage)
         .accessibilityHidden(true)
@@ -788,10 +789,25 @@ struct OnboardingView: View {
 
     private func celebrateScreen(size: CGSize) -> some View {
         ZStack {
-            // The blob has just become theirs, so it carries their face.
-            YourAvatar(diameter: 128)
-                .position(x: size.width / 2, y: size.height * 0.355)
-                .transition(.opacity.combined(with: .scale(scale: 0.86)))
+            // Your photo, where the blob sat, in Profile's glow. Without one,
+            // the filled blob stands in for you.
+            if let profilePhoto {
+                Image(uiImage: profilePhoto)
+                    .resizable()
+                    .scaledToFill()
+                    .frame(width: 190, height: 190)
+                    .clipShape(Circle())
+                    .background {
+                        Image("ProfileGlow")
+                            .resizable()
+                            .frame(width: 190 * 1.37, height: 190 * 1.33)
+                            .rotationEffect(.degrees(90.45))
+                            .accessibilityHidden(true)
+                    }
+                    .position(x: size.width / 2, y: size.height * 0.307)
+                    .transition(.opacity.combined(with: .scale(scale: 0.9)))
+                    .accessibilityLabel("Your photo")
+            }
 
             Text("Welcome, \(name.isEmpty ? "friend" : name)!")
                 .font(.kithWelcome)

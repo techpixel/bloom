@@ -699,23 +699,26 @@ struct FeelingTag: View {
     let title: String
     let fill: Color
     var text: Color?
+    /// Bigger, for tags you tap to change rather than just read.
+    var large = false
 
-    init(_ title: String, fill: Color, text: Color? = nil) {
+    init(_ title: String, fill: Color, text: Color? = nil, large: Bool = false) {
         self.title = title
         self.fill = fill
         self.text = text
+        self.large = large
     }
 
     var body: some View {
         Text(title)
-            .font(.kithFineStrong)
-            .kithCapCentered(12, relativeTo: .caption)
+            .font(large ? .kithCaptionStrong : .kithFineStrong)
+            .kithCapCentered(large ? 13 : 12, relativeTo: large ? .footnote : .caption)
             .foregroundStyle(text ?? KithTheme.ink(false))
             .lineLimit(1)
             // Never squeezed into "Energiz…" by a tight row; the row wraps instead.
             .fixedSize()
-            .padding(.horizontal, 9.6)
-            .frame(height: 24)
+            .padding(.horizontal, large ? 14 : 9.6)
+            .frame(height: large ? 34 : 24)
             .background(fill, in: Capsule())
     }
 }
@@ -732,6 +735,8 @@ struct YourAvatar: View {
                 .scaledToFill()
                 .frame(width: diameter, height: diameter)
                 .clipShape(Circle())
+        } else if ProfilePhotoStore.removed {
+            ProfilePhotoStore.blank(diameter: diameter, dark: false)
         } else if DemoCast.isJudge {
             ContactAvatar(contact: KithContact(name: name, face: DemoCast.initials(name, .mint)), diameter: diameter)
         } else {

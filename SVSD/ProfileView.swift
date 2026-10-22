@@ -56,11 +56,6 @@ struct ProfileView: View {
                     editButton
                 }
                 .padding(.horizontal, gutter)
-                // The dev menu's wrench sits in this corner, but only in debug
-                // builds; shift clear of it there and leave release untouched.
-                #if DEBUG
-                .padding(.trailing, 44)
-                #endif
                 .padding(.top, 10 * scale)
 
                 portrait
@@ -143,6 +138,8 @@ struct ProfileView: View {
                     .scaledToFill()
                     .frame(width: photoSize, height: photoSize)
                     .clipShape(Circle())
+            } else if ProfilePhotoStore.removed {
+                ProfilePhotoStore.blank(diameter: photoSize, dark: isDark)
             } else if DemoCast.isJudge {
                 // No stand-in face in the judge's build: your initials until you pick a photo.
                 ContactAvatar(contact: KithContact(name: name, face: DemoCast.initials(name, .mint)), diameter: photoSize)
@@ -510,6 +507,8 @@ struct ProfileView: View {
     private func usePhoto(_ image: UIImage?) {
         customPhoto = image
         ProfilePhotoStore.save(image)
+        // Removing it leaves the circle empty, not back on the sample photo.
+        ProfilePhotoStore.removed = image == nil
     }
 
     private func beginEditingProfile() {
@@ -540,7 +539,27 @@ enum ProfilePhotoStore {
         UIImage(contentsOfFile: url.path)
     }
 
+    /// Set when you take your photo away, so the circle stays empty.
+    static var removed: Bool {
+        get { UserDefaults.standard.bool(forKey: "profile.photoRemoved") }
+        set { UserDefaults.standard.set(newValue, forKey: "profile.photoRemoved") }
+    }
+
+    /// An empty circle with a quiet silhouette: no photo yet.
+    static func blank(diameter: CGFloat, dark: Bool) -> some View {
+        Circle()
+            .fill(KithTheme.uiFill(dark))
+            .overlay(
+                Image(systemName: "person.fill")
+                    .font(.system(size: diameter * 0.36))
+                    .foregroundStyle(KithTheme.secondary(dark).opacity(0.5))
+            )
+            .frame(width: diameter, height: diameter)
+            .accessibilityLabel("No photo")
+    }
+
     static func save(_ image: UIImage?) {
+        if image != nil { removed = false }
         if let data = image?.jpegData(compressionQuality: 0.85) {
             try? data.write(to: url, options: .atomic)
         } else {

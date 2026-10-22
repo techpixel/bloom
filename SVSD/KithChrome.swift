@@ -132,8 +132,8 @@ struct RangeTabs: View {
                 Button { choose(option) } label: {
                     HStack(spacing: 4) {
                         Text(option.title)
-                            .font(.kithCaption)
-                            .kithCapCentered(13, relativeTo: .footnote)
+                            .font(KithType.font(.w90, 12, .caption))
+                            .kithCapCentered(12, relativeTo: .caption)
                             .foregroundStyle(ink)
                         Text("\(counts[option] ?? 0)")
                             .font(.kithFine)

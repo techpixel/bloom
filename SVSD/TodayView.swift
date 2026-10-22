@@ -67,6 +67,7 @@ struct TodayView: View {
     @AppStorage("settings.onBreak") private var onBreak = false
     /// The entrance plays the first time Home opens each launch, not on every
     /// return to the tab.
+    @State private var screenWidth: CGFloat = 393
     @State private var entered = TodayView.hasEntered
     @State private var friendSectionShown = TodayView.hasEntered
     private static var hasEntered = false
@@ -83,7 +84,10 @@ struct TodayView: View {
     private let designWidth: CGFloat = 393
     private let cardWidth: CGFloat = 291
     /// A recent card, plus a sliver of the next one so the strip reads as scrollable.
-    private let recentCardWidth: CGFloat = 325
+    /// One row fills the gutter-to-gutter width less a 28pt peek of the next.
+    private func recentCardWidth(in width: CGFloat) -> CGFloat {
+        max(280, width - 40 - 28)
+    }
     /// Copies of the nudges laid end to end. Odd, so the first nudge can start
     /// in the true middle with as many laps available either way.
     private static let laps = 101
@@ -119,15 +123,14 @@ struct TodayView: View {
                 .animation(.easeOut(duration: 1), value: entered)
 
             VStack(alignment: .leading, spacing: 0) {
-                // Pinned: the greeting stays where the comp puts it, and
-                // everything under it scrolls.
-                greeting
-
                 ScrollView(.vertical, showsIndicators: false) {
                     VStack(alignment: .leading, spacing: 0) {
+                        // Scrolls away with everything else rather than sitting
+                        // over it.
+                        greeting
+
                         recentSection
-                            .padding(.top, 20)
-                            .padding(.horizontal, 20)
+                            .padding(.top, 24)
 
                         // The whole section enters as one, after Recent, on its own
                         // flag: the carousel inside kept a view-scoped entrance from
@@ -170,21 +173,17 @@ struct TodayView: View {
                         .offset(y: friendSectionShown || reduceMotion ? 0 : 12)
                         .blur(radius: friendSectionShown || reduceMotion ? 0 : 4)
                     }
-                    .padding(.bottom, 28)
+                    // Room to scroll the last card and its button clear of the
+                    // floating tab bar.
+                    .padding(.bottom, 110)
                 }
                 .scrollBounceBehavior(.basedOnSize)
                 .scrollDismissesKeyboard(.interactively)
-                // A soft edge where the content slides under the greeting.
-                .mask {
-                    VStack(spacing: 0) {
-                        LinearGradient(colors: [.clear, .black], startPoint: .top, endPoint: .bottom)
-                            .frame(height: 14)
-                        Rectangle()
-                    }
-                }
+
             }
         }
         .background(KithTheme.canvas(isDark))
+        .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { screenWidth = $0 }
         .task { await playEntrance() }
         .messageSheet($composing)
         .fullScreenCover(item: $planning) { _ in
@@ -386,13 +385,12 @@ struct TodayView: View {
             }
         } label: {
             Text("Send a Text")
-                .font(.kithCaption)
-                .kithCapCentered(13, relativeTo: .footnote)
+                .font(.kithSecondary)
+                .kithCapCentered(15, relativeTo: .subheadline)
                 .foregroundStyle(KithTheme.canvas(isDark))
                 .frame(maxWidth: .infinity)
-                .frame(height: 36)
-                .background(ink, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
-                .frame(minHeight: 44)
+                .frame(height: 50)
+                .background(ink, in: RoundedRectangle(cornerRadius: 25, style: .continuous))
                 .contentShape(Rectangle())
         }
         .buttonStyle(PressableButtonStyle())
@@ -413,6 +411,7 @@ struct TodayView: View {
                     .font(.kithBodyStrong)
                     .foregroundStyle(ink)
                     .accessibilityAddTraits(.isHeader)
+                    .padding(.horizontal, 20)
                     .entrance(2, visible: entered)
 
                 VStack(spacing: 10) {
@@ -420,12 +419,13 @@ struct TodayView: View {
                         reflectionCard(asking)
                             .matchedGeometryEffect(id: asking.id, in: recentCards)
                             .transition(.opacity)
+                            .padding(.horizontal, 20)
                     } else if !answeredRecents.isEmpty {
                         ScrollView(.horizontal, showsIndicators: false) {
                             LazyHStack(spacing: 10) {
                                 ForEach(answeredRecents) { hangout in
                                     HangoutRow(hangout: hangout) { openHangout = hangout.id }
-                                        .frame(width: recentCardWidth)
+                                        .frame(width: recentCardWidth(in: screenWidth))
                                         .matchedGeometryEffect(id: hangout.id, in: recentCards)
                                         .transition(.opacity)
                                 }
@@ -433,7 +433,7 @@ struct TodayView: View {
                             .scrollTargetLayout()
                         }
                         .scrollTargetBehavior(.viewAligned)
-                        .scrollClipDisabled()
+                        .contentMargins(.horizontal, 20, for: .scrollContent)
                     }
                 }
                 .entrance(3, visible: entered)

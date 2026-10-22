@@ -75,10 +75,16 @@ struct RootView: View {
         #if DEBUG
             // Rebuilt on each jump, so every screen starts clean.
             .id(dev.destination)
-            .overlay(alignment: .topTrailing) {
+            // Beside the feedback pin, top left, so the top-right corner stays
+            // free for the screens' own buttons (Profile's Edit).
+            // Measured from the screen's edge, like the pin's own window, so
+            // the two line up instead of the wrench dropping below the notch.
+            .overlay {
                 DevMenuButton(router: dev)
-                    .padding(.top, 8)
-                    .padding(.trailing, 12)
+                    .padding(.top, 15)
+                    .padding(.leading, 64)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                    .ignoresSafeArea()
             }
         #endif
     }

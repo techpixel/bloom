@@ -422,7 +422,7 @@ struct MeetupDetailView: View {
                     .font(.kithFine)
                     .foregroundStyle(secondary)
 
-                FlowLayout(spacing: 3, lineSpacing: 3) {
+                FlowLayout(spacing: 6, lineSpacing: -4) {
                     ForEach(Feeling.allCases) { feeling in
                         let on = hangout.feelings.contains(feeling)
                         Button {
@@ -433,9 +433,11 @@ struct MeetupDetailView: View {
                             FeelingTag(
                                 feeling.rawValue,
                                 fill: on ? KithTheme.feelingSelected : KithTheme.uiFill(isDark),
-                                text: on ? nil : secondary
+                                text: on ? nil : secondary,
+                                large: true
                             )
-                            .frame(minHeight: 32)
+                            // 34pt pills with the row gap, so each target reaches 44pt.
+                            .frame(minHeight: 44)
                             .contentShape(Rectangle())
                         }
                         .buttonStyle(PressableButtonStyle())
