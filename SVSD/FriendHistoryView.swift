@@ -83,6 +83,7 @@ struct FriendHistoryView: View {
                 .padding(.horizontal, 30)
                 .padding(.bottom, 40)
                 }
+                .progressiveTopBlur()
             }
         }
         .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { screenWidth = $0 }
@@ -105,7 +106,7 @@ struct FriendHistoryView: View {
     /// Their face in its glow, their name, and the pattern across every entry.
     private var friendRow: some View {
         HStack(alignment: .center, spacing: 16) {
-            ContactAvatar(contact: contact, diameter: 94.1 * scale, initialsFont: .kithInitials)
+            ContactAvatar(contact: contact, diameter: 94.1 * scale)
                 .background {
                     Image("MeetupGlow")
                         .resizable()
@@ -242,12 +243,11 @@ struct FriendHistoryView: View {
             let outing = outings[roll.next(outings.count)]
             let activity = outing.activity
             let spot = outing.spots[roll.next(outing.spots.count)]
-            // A third are left unreflected, the way the real log has them.
+            // Past months are all answered: anything left unreflected past
+            // the next day drops out.
             var picked: Set<Feeling> = []
-            if roll.next(3) > 0 {
-                for _ in 0..<roll.next(from: 1, to: 2) {
-                    picked.insert(feelings[roll.next(feelings.count)])
-                }
+            for _ in 0..<roll.next(from: 1, to: 2) {
+                picked.insert(feelings[roll.next(feelings.count)])
             }
             return RecentHangout(
                 contact: contact,

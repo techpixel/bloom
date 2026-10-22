@@ -8,6 +8,13 @@ struct SVSDApp: App {
 
     init() {
         KithType.registerFonts()
+        #if JUDGE_DEMO
+        // Every judging session starts with Bloom on, whatever an earlier run
+        // on the same Mac left the switch at.
+        UserDefaults.standard.removeObject(forKey: "settings.onBreak")
+        #endif
+        // Before any of the sample people are made.
+        Recast.prepare()
     }
 
     var body: some Scene {
@@ -70,6 +77,7 @@ private final class DemoNotificationDelegate: NSObject, UIApplicationDelegate, U
         didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]? = nil
     ) -> Bool {
         UNUserNotificationCenter.current().delegate = self
+        DemoRemote.shared.start()
         return true
     }
 
@@ -89,7 +97,14 @@ struct RootView: View {
         .contains(where: ProcessInfo.processInfo.arguments.contains)
     @StateObject private var dev = DevRouter()
     #else
+    // Celeste's build (Release, on an iPhone) opens straight on Home, already
+    // set up; Log Out still replays onboarding. The judge's and the Mac's
+    // start at the beginning.
+    #if JUDGE_DEMO || targetEnvironment(macCatalyst)
     @State private var onboarded = false
+    #else
+    @State private var onboarded = true
+    #endif
     #endif
 
     var body: some View {
@@ -146,7 +161,17 @@ struct RootView: View {
 
     @ViewBuilder
     private var defaultContent: some View {
-        if onboarded {
+        if onboarded && !contactsResolved {
+            // Onboarding, which would ask, is skipped on Celeste, so iOS asks
+            // here, before Home is built from the real people.
+            KithTheme.canvas(false)
+                .ignoresSafeArea()
+                .task {
+                    _ = await DeviceContacts.requestAccess()
+                    Recast.prepare()
+                    contactsResolved = true
+                }
+        } else if onboarded {
             MainTabView(onLogOut: { onboarded = false })
         } else {
             OnboardingView(onComplete: { onboarded = true })
@@ -161,6 +186,7 @@ struct RootView: View {
 
     /// The judge's build opens on a note about what's simulated, once.
     @AppStorage("demo.noticeRead") private var demoNoticeRead = false
+    @State private var contactsResolved = !DeviceContacts.needsAsking
 }
 
 /// What's real and what isn't, before the judge's build starts: shown once,
@@ -223,6 +249,7 @@ enum AppTab: Hashable {
 /// The floating bottom nav from the comps. On iOS 26 the system tab bar is
 /// already the floating glass capsule they draw, so it stays a plain TabView.
 struct MainTabView: View {
+    @Environment(\.scenePhase) private var scenePhase
     @State private var tab: AppTab
     /// One set of hangouts for Home, Recaps and every entry page.
     @State private var hangouts = HangoutStore()
@@ -276,6 +303,29 @@ struct MainTabView: View {
                 .phoneTabBarOnMac()
         }
         .tint(KithTheme.navActive)
+        // The demo remote: a Mac on the same Wi-Fi asks for a prompt, it lands
+        // in Home's Recent, and Home comes forward to show it.
+        .onAppear {
+            let store = hangouts
+            DemoRemote.shared.handler = { request in
+                var problem: String?
+                withAnimation(.spring(response: 0.5, dampingFraction: 0.86)) {
+                    problem = store.apply(remote: request)
+                    // Naming lands on the entry you're on; the rest show on Home.
+                    if problem == nil, request["kind"] as? String != "name" { tab = .today }
+                }
+                return problem
+            }
+            DemoRemote.shared.friends = { store.remoteFriends }
+        }
+        .onDisappear {
+            DemoRemote.shared.handler = nil
+            DemoRemote.shared.friends = nil
+        }
+        // Coming back the next day lets go of anything left unanswered.
+        .onChange(of: scenePhase) { _, phase in
+            if phase == .active { hangouts.dropExpired() }
+        }
         #if targetEnvironment(macCatalyst)
         // A Mac puts tabs along the top; Bloom keeps the phone's floating bar.
         .overlay(alignment: .bottom) {
@@ -336,7 +386,7 @@ private struct PhoneTabBar: View {
                             .scaledToFit()
                             .frame(width: 26, height: 26)
                         Text(item.title)
-                            .font(.system(size: 12, weight: .medium))
+                            .font(.system(size: 15, weight: .medium))
                     }
                     .foregroundStyle(chosen ? KithTheme.navActive : KithTheme.ink(false))
                     .frame(maxWidth: .infinity)

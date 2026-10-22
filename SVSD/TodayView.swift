@@ -12,8 +12,109 @@ struct TodayNudge: Identifiable {
     /// only show the friends who have an opening in that range.
     var free: [ScheduleRange: String]
     var idea: String
+    /// What the idea is, so it can name a saved place that suits it.
+    var outing: Outing?
+    /// Where the idea would happen, from where you go: shown under it as
+    /// "at Vienna Cafe?" until you've named somewhere for the card.
+    var place: String?
 
     var id: String { contact.id }
+
+    /// Every card's title, by friend. A place you've named shows on one card
+    /// only, not all of them: a friend's you've been there with comes first,
+    /// then one whose idea its tags suit. The place you named last always
+    /// gets a card, taking over the first still showing its plain idea.
+    /// The words come from the place's own tags, never the card's old idea,
+    /// so a walking spot doesn't turn into coffee. Everyone else keeps their
+    /// own idea.
+    static func titles(for nudges: [TodayNudge], places: [SavedPlace], hangouts: [RecentHangout]) -> [String: NudgeTitle] {
+        var titles = Dictionary(uniqueKeysWithValues: nudges.map { ($0.id, $0.plainTitle(places: places)) })
+        var taken: Set<String> = []
+
+        for (index, place) in places.enumerated() {
+            let free = nudges.filter { !taken.contains($0.id) }
+            let card = free.first { $0.wentTo(place, hangouts: hangouts) }
+                ?? free.first { $0.outing?.suits(place) == true }
+                ?? (index == 0 ? free.first : nil)
+            guard let card else { continue }
+            taken.insert(card.id)
+            titles[card.id] = NudgeTitle(idea: Outing.suiting(place).phrase, place: "at \(place.name)?")
+        }
+        return titles
+    }
+
+    /// The card's own idea, at its address if it has one, by your name for
+    /// it if you've named it: "Grab a coffee" over "at Vienna Cafe?".
+    private func plainTitle(places: [SavedPlace]) -> NudgeTitle {
+        guard let place else { return NudgeTitle(idea: idea) }
+        let named = places.first { $0.shortPlace == place || $0.place == place }?.name ?? place
+        let idea = idea.hasSuffix("?") ? String(idea.dropLast()) : idea
+        return NudgeTitle(idea: idea, place: "at \(named)?")
+    }
+
+    /// "When and where you last saw them", calling a place you've named by
+    /// your name for it, and only that place.
+    func seen(places: [SavedPlace]) -> String {
+        places.reduce(seen) { line, place in
+            line.replacingOccurrences(of: place.shortPlace, with: place.name)
+        }
+    }
+
+    /// You've been to the place together, or last saw them there.
+    private func wentTo(_ place: SavedPlace, hangouts: [RecentHangout]) -> Bool {
+        seen.contains(place.shortPlace)
+            || hangouts.contains { $0.contact.id == contact.id && ($0.place == place.place || $0.place == place.name) }
+    }
+}
+
+/// A card's idea, and on its own line the place it's at, if any:
+/// "Grab a coffee" over "at Vienna Cafe?".
+struct NudgeTitle {
+    var idea: String
+    var place: String?
+}
+
+/// The carousel's words, by friend, and how many lines each kind needs.
+/// No place on any card means no place line at all.
+private struct NudgeCopy {
+    var titles: [String: NudgeTitle]
+    var seen: [String: String]
+    var titleLines: Int
+    var placeLines: Int
+    var seenLines: Int
+    var freeLines: Int
+}
+
+/// What a nudge suggests doing, in the words it takes before "at <place>?".
+struct Outing {
+    var phrase: String
+    /// Places tagged with any of these suit it, the first ones best. Your
+    /// own tags count too, so a place you tagged "coffee" suits coffee.
+    var tags: [String]
+
+    static let coffee = Outing(phrase: "grab a coffee", tags: ["coffee", "casual"])
+    static let fries = Outing(phrase: "split some fries", tags: ["dinner", "fries", "casual"])
+    static let walk = Outing(phrase: "take a walk", tags: ["walk", "outside"])
+    static let study = Outing(phrase: "study together", tags: ["studying", "study"])
+    static let movie = Outing(phrase: "catch a movie", tags: ["movie"])
+    static let dinner = Outing(phrase: "get dinner", tags: ["dinner"])
+    static let hangOut = Outing(phrase: "hang out", tags: ["casual"])
+
+    func suits(_ place: SavedPlace) -> Bool {
+        place.tags.contains { tags.contains($0.lowercased()) }
+    }
+    static let meetUp = Outing(phrase: "meet up", tags: [])
+
+    /// The words for a place by its tags, the first one you picked first:
+    /// "meet up" for tags of your own that say nothing about what you'd do,
+    /// or none.
+    static func suiting(_ place: SavedPlace) -> Outing {
+        let byTag = [
+            "casual": hangOut, "studying": study, "study": study, "dinner": dinner, "movie": movie,
+            "coffee": coffee, "walk": walk, "outside": walk, "fries": fries
+        ]
+        return place.tags.lazy.compactMap { byTag[$0.lowercased()] }.first ?? meetUp
+    }
 }
 
 /// A hangout Bloom has already logged for you, and what you made of it. Home
@@ -30,16 +131,39 @@ struct RecentHangout: Identifiable {
     var placeName: String?
     var placeTags: [String] = []
     var namingDismissed = false
-    /// You dismissed the prompt. It stays unreflected and keeps its Needs
-    /// Reflection pill in the lists; it just stops asking on Home.
-    var reflectionDismissed = false
     var photos: [MeetupPhoto] = []
     var feelings: Set<Feeling> = []
     var reflection = ""
     /// Which recap periods pick it out as a highlight.
     var highlightIn: Set<RecapPeriod> = []
+    /// When it happened. Unanswered once the next day is over, it's dropped.
+    var date: Date = .now
 
     let id = UUID()
+
+    /// What a hangout is called: where it was and who with, "Eleventh House
+    /// with Manitej", by your name for the place once you've given it one.
+    /// The activity stays in `title`, for editing.
+    var heading: String {
+        spot.lowercased() == "home" ? "At home with \(contact.firstName)" : "\(spot) with \(contact.firstName)"
+    }
+
+    /// The line under the heading: day and length, then what you did, since
+    /// the heading already says where. "Mon · 2 hours · Coffee".
+    var subheading: String {
+        var parts = detail.components(separatedBy: " · ")
+        // Days go by their three letters; "Today" stays as it is.
+        let weekdays = Calendar.current.weekdaySymbols
+        if let day = parts.first, weekdays.contains(day) { parts[0] = String(day.prefix(3)) }
+        let activity = title.components(separatedBy: " with ").first ?? title
+        if parts.count >= 3 { parts[parts.count - 1] = activity } else { parts.append(activity) }
+        return parts.joined(separator: " · ")
+    }
+
+    /// The place without its town.
+    var spot: String {
+        placeName ?? String(place.split(separator: ",").first ?? Substring(place))
+    }
 }
 
 // MARK: - Screen
@@ -53,6 +177,10 @@ struct TodayView: View {
     /// The carousel slot in the middle. Slots repeat the nudges so the carousel
     /// loops; `slot % count` is the nudge.
     @State private var focusedSlot: Int?
+    /// The tallest card the carousel has laid out, which every card then
+    /// matches: a safety net under the reserved lines, so a line that wraps
+    /// one card can never leave its neighbours shorter.
+    @State private var tallestCard: CGFloat = 0
     @State private var composing: MessageDraft?
     @State private var planning: KithContact?
     @Environment(HangoutStore.self) private var store
@@ -83,6 +211,8 @@ struct TodayView: View {
     private var isDark: Bool { colorScheme == .dark }
     private var ink: Color { KithTheme.ink(isDark) }
     private var secondary: Color { KithTheme.secondary(isDark) }
+    // Kith/Colors/Ui Fill, #EEE5D8 — every filled surface in Bloom is this
+    // one colour, the same as the range switcher below.
     private var card: Color { KithTheme.uiFill(isDark) }
 
     // The comp is an iPhone 16 frame: 393 x 852.
@@ -188,6 +318,7 @@ struct TodayView: View {
                     // floating tab bar.
                     .padding(.bottom, 110)
                 }
+                .progressiveTopBlur()
                 .scrollBounceBehavior(.basedOnSize)
                 .scrollDismissesKeyboard(.interactively)
 
@@ -211,6 +342,9 @@ struct TodayView: View {
             if open == nil { loadDraft() }
         }
         .onAppear(perform: loadDraft)
+        // A new newest hangout (from a sighting, or the demo remote) starts
+        // with a clean answer.
+        .onChange(of: store.hangouts.first?.id) { loadDraft() }
         .drawer(isPresented: Binding(get: { openHangout != nil }, set: { if !$0 { openHangout = nil } })) {
             if let index = recents.firstIndex(where: { $0.id == openHangout }) {
                 MeetupDetailView(hangout: Bindable(store).hangouts[index]) { openHangout = nil }
@@ -318,12 +452,13 @@ struct TodayView: View {
                 .frame(maxWidth: .infinity)
                 .padding(.vertical, 60)
         } else {
+            let copy = nudgeCopy(cardWidth: cardWidth(in: screenWidth))
             // The send button's 44pt target already pads 4pt above the pill, so
             // the visible gap under the cards is 4 + 4.
             ScrollView(.horizontal, showsIndicators: false) {
                     LazyHStack(spacing: 12) {
                         ForEach(slots, id: \.self) { slot in
-                            nudgeCard(nudges[slot % nudges.count])
+                            nudgeCard(nudges[slot % nudges.count], copy: copy)
                                 .frame(width: cardWidth(in: screenWidth))
                         }
                     }
@@ -334,6 +469,11 @@ struct TodayView: View {
                 .contentMargins(.horizontal, carouselMargin(in: screenWidth), for: .scrollContent)
                 // A tick as each card settles, not when the carousel first parks.
                 .sensoryFeedback(.selection, trigger: focusedSlot) { old, new in old != nil && new != nil }
+                // A new set of cards measures afresh, so it isn't held to the
+                // last set's height.
+                .onChange(of: range) { tallestCard = 0 }
+                .onChange(of: store.savedPlaces.map(\.name)) { tallestCard = 0 }
+                .onChange(of: screenWidth) { tallestCard = 0 }
             .onAppear {
                 // A beat later, once the strip has laid out, or the jump is lost.
                 let start = middleSlot
@@ -344,13 +484,23 @@ struct TodayView: View {
 
     /// One friend to see (comp 406:1695): the idea up top, their face in a
     /// glow of their colour, when you last saw them and when you're both free.
-    private func nudgeCard(_ nudge: TodayNudge) -> some View {
+    private func nudgeCard(_ nudge: TodayNudge, copy: NudgeCopy) -> some View {
         VStack(spacing: 12) {
-            // Bloom offers the idea; it never picks for you.
-            Text(nudge.idea.prefix(1).uppercased() + nudge.idea.dropFirst())
-                .font(.kithCardTitle)
-                .foregroundStyle(ink)
-                .multilineTextAlignment(.center)
+            // Bloom offers the idea; it never picks for you. The place goes
+            // on its own line; a long name wraps, and every card keeps room
+            // for as many lines.
+            let title = copy.titles[nudge.id] ?? NudgeTitle(idea: nudge.idea)
+            VStack(spacing: 2) {
+                Text(title.idea)
+                    .lineLimit(copy.titleLines, reservesSpace: true)
+                if copy.placeLines > 0 {
+                    Text(title.place ?? "")
+                        .lineLimit(copy.placeLines, reservesSpace: true)
+                }
+            }
+            .font(.kithCardTitle)
+            .foregroundStyle(ink)
+            .multilineTextAlignment(.center)
 
             haloAvatar(nudge.contact)
 
@@ -358,13 +508,14 @@ struct TodayView: View {
                 Text(nudge.contact.name)
                     .font(.kithCardTitle)
                     .foregroundStyle(ink)
-                // Two lines kept for each, filled or not, so every card in the
-                // carousel is the same height.
-                Text(nudge.seen)
+                // Two lines kept for each, filled or not, or more if a place's
+                // name runs longer, so every card in the carousel is the same
+                // height.
+                Text(copy.seen[nudge.id] ?? nudge.seen)
                     .font(.kithCaption)
                     .foregroundStyle(secondary)
                     .multilineTextAlignment(.center)
-                    .lineLimit(2, reservesSpace: true)
+                    .lineLimit(copy.seenLines, reservesSpace: true)
             }
             .frame(maxWidth: .infinity)
 
@@ -372,14 +523,36 @@ struct TodayView: View {
                 .font(.kithCaptionStrong)
                 .foregroundStyle(KithTheme.suggestionAccent)
                 .multilineTextAlignment(.center)
-                .lineLimit(2)
+                .lineLimit(copy.freeLines, reservesSpace: true)
         }
         .padding(.horizontal, 10)
         .padding(.vertical, 16)
-        .frame(maxWidth: .infinity)
+        .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { height in
+            if height > tallestCard + 0.5 { tallestCard = height }
+        }
+        .frame(maxWidth: .infinity, minHeight: tallestCard, alignment: .top)
         .background(card, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
         // Contain, not combine: the face inside is its own button.
         .accessibilityElement(children: .contain)
+    }
+
+    /// What the cards say, worked out together so they keep one height: if a
+    /// long place name wraps a line on one card, every card saves the room.
+    private func nudgeCopy(cardWidth: CGFloat) -> NudgeCopy {
+        let titles = TodayNudge.titles(for: nudges, places: store.savedPlaces, hangouts: store.hangouts)
+            .mapValues { NudgeTitle(idea: $0.idea.prefix(1).uppercased() + $0.idea.dropFirst(), place: $0.place) }
+        let seen = Dictionary(uniqueKeysWithValues: nudges.map { ($0.id, $0.seen(places: store.savedPlaces)) })
+        // The card's own 10pt sides.
+        let width = cardWidth - 20
+        func lines(_ text: String) -> Int { KithType.lineCount(text, .w130, 15, .subheadline, width: width) }
+        return NudgeCopy(
+            titles: titles,
+            seen: seen,
+            titleLines: titles.values.map { lines($0.idea) }.max() ?? 1,
+            placeLines: titles.values.compactMap(\.place).map(lines).max() ?? 0,
+            seenLines: max(2, seen.values.map { KithType.lineCount($0, .w90, 15, .footnote, width: width) }.max() ?? 2),
+            freeLines: nudges.compactMap { $0.free[range] }.map { KithType.lineCount($0, .w130, 15, .footnote, width: width) }.max() ?? 1
+        )
     }
 
     /// The friend's colour as a soft, blurred glow behind their face, the
@@ -490,7 +663,7 @@ struct TodayView: View {
                         Text(sighting.place)
                             .font(.kithFine)
                             .foregroundStyle(secondary)
-                            .kithCapCentered(12, relativeTo: .caption)
+                            .kithCapCentered(15, relativeTo: .caption)
                     }
 
                     Text(sighting.when)
@@ -547,7 +720,7 @@ struct TodayView: View {
     /// its row. It also keeps this in step with `answer()`, which writes to the
     /// newest entry.
     private var awaitingReflection: RecentHangout? {
-        recents.first.flatMap { $0.feelings.isEmpty && !$0.reflectionDismissed ? $0 : nil }
+        recents.first.flatMap { $0.feelings.isEmpty ? $0 : nil }
     }
 
     /// The newest hangout with each friend, the ones still wanting a reflection
@@ -577,28 +750,15 @@ struct TodayView: View {
                 ContactAvatar(contact: friend, diameter: 60, badgeRing: card)
 
                 VStack(alignment: .leading, spacing: 5) {
-                    Text(hangout.title)
+                    Text(hangout.heading)
                         .font(.kithCardTitle)
                         .foregroundStyle(ink)
-                    Text(hangout.detail)
+                    Text(hangout.subheading)
                         .font(.kithCaption)
                         .foregroundStyle(KithTheme.secondary(isDark))
                         .fixedSize(horizontal: false, vertical: true)
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
-
-                Button(action: dismissReflection) {
-                    Image(systemName: "xmark")
-                        .font(.system(size: 13, weight: .semibold))
-                        .foregroundStyle(KithTheme.secondary(isDark))
-                        .frame(width: 32, height: 32)
-                        .background(KithTheme.canvas(isDark), in: Circle())
-                        .frame(minHeight: 44)
-                        .contentShape(Rectangle())
-                }
-                .buttonStyle(PressableButtonStyle())
-                .accessibilityLabel("Skip this reflection")
-                .accessibilityHint("Keeps it in your list to answer later")
             }
             .accessibilityElement(children: .contain)
             .contextMenu {
@@ -672,7 +832,7 @@ struct TodayView: View {
         return Button(action: answer) {
             Text("Save")
                 .font(.kithCaption)
-                .kithCapCentered(13, relativeTo: .footnote)
+                .kithCapCentered(15, relativeTo: .footnote)
                 .foregroundStyle(hasWords ? KithTheme.canvas(isDark) : KithTheme.secondaryOnFill(isDark))
                 .padding(.horizontal, 22)
                 .frame(height: 36)
@@ -687,18 +847,6 @@ struct TodayView: View {
     }
 
     /// Files the answer into the entry; the card shrinks into its row.
-    /// Steps the prompt aside without answering it. The hangout keeps its
-    /// Needs Reflection pill and settles into the strip like any other row.
-    private func dismissReflection() {
-        guard !store.hangouts.isEmpty else { return }
-        settling?.cancel()
-        withAnimation(reduceMotion ? .easeOut(duration: 0.2) : .spring(response: 0.55, dampingFraction: 0.86)) {
-            store.hangouts[0].reflectionDismissed = true
-        }
-        draftFeelings = []
-        draftReflection = ""
-    }
-
     private func answer() {
         guard !store.hangouts.isEmpty, !draftFeelings.isEmpty else { return }
         UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
@@ -735,7 +883,9 @@ extension TodayNudge {
                 .today: "You’re both free at 4:00 PM.",
                 .thisWeek: "You’re both free Wednesday at 4:00 PM."
             ],
-            idea: "grab a coffee?"
+            idea: "grab a coffee?",
+            outing: .coffee,
+            place: "Vienna Cafe"
         ),
         TodayNudge(
             contact: KithContact(
@@ -748,7 +898,9 @@ extension TodayNudge {
                 .tomorrow: "You’re both free at 6:00 PM.",
                 .thisWeek: "You’re both free Friday evening."
             ],
-            idea: "split a plate of fries?"
+            idea: "split a plate of fries?",
+            outing: .fries,
+            place: "Lafayette Brewing"
         ),
         TodayNudge(
             contact: KithContact(
@@ -760,7 +912,8 @@ extension TodayNudge {
                 .tomorrow: "You’re both free at noon.",
                 .thisWeek: "You’re both free Thursday afternoon."
             ],
-            idea: "go for a walk?"
+            idea: "go for a walk?",
+            outing: .walk
         ),
         TodayNudge(
             contact: KithContact(
@@ -772,7 +925,8 @@ extension TodayNudge {
                 .today: "You’re both free at 6:00 PM.",
                 .thisWeek: "You’re both free Saturday morning."
             ],
-            idea: "cook something?"
+            idea: "cook something?",
+            outing: .dinner
         ),
         TodayNudge(
             contact: KithContact(
@@ -784,7 +938,9 @@ extension TodayNudge {
                 .tomorrow: "You’re both free at 3:00 PM.",
                 .thisWeek: "You’re both free Sunday at 2:00 PM."
             ],
-            idea: "study together?"
+            idea: "study together?",
+            outing: .study,
+            place: "Hicks Library"
         )
     ]
 }
@@ -792,6 +948,13 @@ extension TodayNudge {
 extension RecentHangout {
     /// The comps' hangouts first — the newest is Home's — then enough more that
     /// each friend's recap count adds up to real entries.
+    /// Midday, `days` days back: sample hangouts get real dates.
+    static func daysAgo(_ days: Int, from now: Date = .now) -> Date {
+        let calendar = Calendar.current
+        let day = calendar.date(byAdding: .day, value: -days, to: now) ?? now
+        return calendar.date(bySettingHour: 12, minute: 0, second: 0, of: day) ?? day
+    }
+
     static let sample: [RecentHangout] = {
         if DemoCast.isJudge { return DemoCast.hangouts }
         let manitej = KithContact(
@@ -815,7 +978,7 @@ extension RecentHangout {
         var hangouts = [
             RecentHangout(
                 contact: manitej,
-                title: "Coffee with Manitej",
+                title: "Coffee with \(manitej.firstName)",
                 detail: "Monday · 2 hours · Eleventh House",
                 startTime: "9 AM",
                 place: "Eleventh House, Lafayette",
@@ -825,24 +988,29 @@ extension RecentHangout {
             ),
             RecentHangout(
                 contact: manitej,
-                title: "Studying with Manitej",
+                title: "Studying with \(manitej.firstName)",
                 detail: "Monday · 2 hours · Eleventh House",
                 startTime: "1 PM",
                 place: "Eleventh House, Lafayette",
                 photos: Self.compPhotos,
                 feelings: [.connected, .energized],
-                reflection: "we joked around a lot at the beginning and hes always a fun guy to hang out with!\n\ngot coffee and studied pretty hard, glad that i decided to meet up with him even thought i really didn’t want to go outside today",
-                highlightIn: [.week]
+                // Played by someone real, the friend could be anyone, so no "he".
+                reflection: Recast.isActive
+                    ? "we joked around a lot at the beginning and they’re always so fun to hang out with!\n\ngot coffee and studied pretty hard, glad that i decided to meet up even though i really didn’t want to go outside today"
+                    : "we joked around a lot at the beginning and hes always a fun guy to hang out with!\n\ngot coffee and studied pretty hard, glad that i decided to meet up with him even thought i really didn’t want to go outside today",
+                highlightIn: [.week],
+                date: daysAgo(1)
             ),
             RecentHangout(
                 contact: ray,
-                title: "Dinner with Ray",
+                title: "Dinner with \(ray.firstName)",
                 detail: "Sunday · 1 hr 20 min · Home",
                 startTime: "7 PM",
                 place: "Home",
                 photos: Self.photos(at: "Home", seed: 3),
                 feelings: [.atEase],
-                highlightIn: [.week, .month]
+                highlightIn: [.week, .month],
+                date: daysAgo(2)
             )
         ]
 
@@ -865,8 +1033,9 @@ extension RecentHangout {
         ]
         let days = ["Saturday", "Friday", "Thursday", "Wednesday", "Tuesday"]
         var step = 0
-        // A few of them already answered, so Home has more than one friend to show.
-        let answered: [String: Set<Feeling>] = ["Ishan": [.energized], "Michelle": [.connected, .atEase]]
+        // Older hangouts have all been answered: one left unanswered past the
+        // next day would have dropped out by now.
+        let answered: [Set<Feeling>] = [[.connected], [.atEase], [.energized, .connected], [.atEase, .connected], [.energized], [.distant]]
         for (contact, count) in more {
             for round in 0..<count {
                 let plan = plans[step % plans.count]
@@ -877,10 +1046,11 @@ extension RecentHangout {
                     startTime: plan.1,
                     place: "\(plan.3), Lafayette",
                     photos: Self.photos(at: plan.3, seed: step),
-                    feelings: round == 0 ? answered[contact.firstName] ?? [] : [],
+                    feelings: answered[step % answered.count],
                     // Enough of them reach the month recap that it reads as a
                     // real list rather than a couple of entries.
-                    highlightIn: step % 3 == 0 ? [.month] : []
+                    highlightIn: step % 3 == 0 ? [.month] : [],
+                    date: daysAgo(3 + step)
                 ))
                 step += 1
             }

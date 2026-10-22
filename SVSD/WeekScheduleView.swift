@@ -151,7 +151,7 @@ struct WeekScheduleView: View {
             VStack(spacing: 6) {
                 ZStack {
                     RoundedRectangle(cornerRadius: 9.663, style: .continuous)
-                        .fill(day.isAvailable ? KithTheme.uiFill(isDark) : KithTheme.suggestionCard(isDark))
+                        .fill(KithTheme.uiFill(isDark))
 
                     if !day.isAvailable {
                         DiagonalHatch()
@@ -252,7 +252,7 @@ struct WeekScheduleView: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .background {
             RoundedRectangle(cornerRadius: 12, style: .continuous)
-                .fill(KithTheme.suggestionCard(isDark))
+                .fill(KithTheme.uiFill(isDark))
         }
         .accessibilityElement(children: .combine)
     }
@@ -350,7 +350,7 @@ extension ActivitySuggestion {
         ActivitySuggestion(
             id: 0,
             title: "Eleventh House West Lafayette",
-            detail: "You seemed to enjoy your time with \(DemoCast.isJudge ? "Nora" : "Manitej") here."
+            detail: "You seemed to enjoy your time with \(DemoCast.isJudge ? "Nora" : Recast.text("Manitej")) here."
         ),
         ActivitySuggestion(
             id: 1,

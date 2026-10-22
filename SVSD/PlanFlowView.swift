@@ -36,7 +36,7 @@ struct PlanFlowView: View {
         .overlay(alignment: .topTrailing) {
             Button { showingDemo = true } label: {
                 Label("Demo", systemImage: "sparkles")
-                    .font(.system(size: 13, weight: .medium))
+                    .font(.system(size: 15, weight: .medium))
                     .foregroundStyle(KithTheme.ink(false))
                     .padding(.horizontal, 12)
                     .frame(height: 36)
@@ -62,7 +62,7 @@ private struct DemoModeView: View {
     private let route = [
         ("At home", "Starting point", "house.fill"),
         ("On campus", "Location updated just now", "building.2.fill"),
-        ("Chauncey Village", "Manitej is nearby", "mappin.and.ellipse")
+        ("Chauncey Village", Recast.text("Manitej is nearby"), "mappin.and.ellipse")
     ]
     private let demoContacts = Friend.sample.map(\.name)
 
@@ -76,7 +76,7 @@ private struct DemoModeView: View {
                         .font(.system(size: 24))
                         .foregroundStyle(KithTheme.ink(isDark))
                     Text("Scripted route · seeded contacts · no live tracking")
-                        .font(.system(size: 13))
+                        .font(.system(size: 15))
                         .foregroundStyle(KithTheme.secondary(isDark))
                 }
                 Spacer()
@@ -89,7 +89,7 @@ private struct DemoModeView: View {
                     .font(.system(size: 18, weight: .medium))
                     .foregroundStyle(KithTheme.ink(isDark))
                 Text(isRunning ? route[routeIndex].1 : "Start the route to simulate location updates.")
-                    .font(.system(size: 14))
+                    .font(.system(size: 15))
                     .foregroundStyle(KithTheme.secondary(isDark))
                 HStack(spacing: 7) {
                     ForEach(route.indices, id: \.self) { index in
@@ -101,20 +101,20 @@ private struct DemoModeView: View {
             }
             .padding(16)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .background(KithTheme.suggestionCard(isDark), in: RoundedRectangle(cornerRadius: 14))
+            .background(KithTheme.uiFill(isDark), in: RoundedRectangle(cornerRadius: 14))
 
             VStack(alignment: .leading, spacing: 8) {
                 Text("Demo contacts")
                     .font(.system(size: 15, weight: .medium))
                     .foregroundStyle(KithTheme.ink(isDark))
                 Text(demoContacts.joined(separator: " · "))
-                    .font(.system(size: 13))
+                    .font(.system(size: 15))
                     .foregroundStyle(KithTheme.secondary(isDark))
                     .fixedSize(horizontal: false, vertical: true)
             }
 
             Text(notificationStatus)
-                .font(.system(size: 13))
+                .font(.system(size: 15))
                 .foregroundStyle(KithTheme.secondary(isDark))
 
             HStack(spacing: 12) {
@@ -151,8 +151,8 @@ private struct DemoModeView: View {
                 center.removePendingNotificationRequests(withIdentifiers: ["demo-nearby", "demo-plan"])
                 center.removeDeliveredNotifications(withIdentifiers: ["demo-nearby", "demo-plan"])
                 guard allowed else { return }
-                try await schedule("demo-nearby", title: "Manitej is nearby", body: "You’re both near Chauncey Village.", after: 8)
-                try await schedule("demo-plan", title: "A good time to meet", body: "You and Michelle are free this afternoon.", after: 18)
+                try await schedule("demo-nearby", title: Recast.text("Manitej is nearby"), body: "You’re both near Chauncey Village.", after: 8)
+                try await schedule("demo-plan", title: "A good time to meet", body: Recast.text("You and Michelle are free this afternoon."), after: 18)
             } catch {
                 notificationStatus = "Couldn’t schedule demo alerts"
             }

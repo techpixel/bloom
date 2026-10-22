@@ -12,3 +12,6 @@ feedback/
 # Local build output
 build/
 dist/
+
+# Python bytecode from the scripts
+__pycache__/

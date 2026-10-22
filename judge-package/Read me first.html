@@ -1,0 +1,189 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Bloom</title>
+<style>
+  :root {
+    --ink: #24211D;
+    --secondary: #716B62;
+    --paper: #FBF8F3;
+    --card: #FFFFFF;
+    --rule: #E7E0D6;
+    --accent: #B46A4F;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--paper);
+    color: var(--ink);
+    font: 17px/1.6 -apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue", sans-serif;
+    -webkit-font-smoothing: antialiased;
+  }
+  .page { max-width: 680px; margin: 0 auto; padding: 72px 24px 96px; }
+
+  header { display: flex; align-items: center; gap: 16px; margin-bottom: 8px; }
+  header svg { width: 44px; height: auto; flex: none; }
+  h1 { font-size: 40px; line-height: 1.1; margin: 0; letter-spacing: -0.02em; }
+  .standfirst { color: var(--secondary); margin: 0 0 8px; font-size: 19px; }
+
+  h2 {
+    font-size: 15px;
+    letter-spacing: 0.09em;
+    text-transform: uppercase;
+    color: var(--secondary);
+    font-weight: 600;
+    margin: 56px 0 20px;
+    padding-bottom: 10px;
+    border-bottom: 1px solid var(--rule);
+  }
+
+  ol.steps { list-style: none; counter-reset: step; margin: 0; padding: 0; }
+  ol.steps > li {
+    counter-increment: step;
+    position: relative;
+    padding-left: 48px;
+    margin-bottom: 32px;
+  }
+  ol.steps > li::before {
+    content: counter(step);
+    position: absolute;
+    left: 0; top: 1px;
+    width: 30px; height: 30px;
+    border-radius: 50%;
+    background: var(--ink);
+    color: var(--paper);
+    font-size: 15px; font-weight: 600;
+    display: flex; align-items: center; justify-content: center;
+  }
+  ol.steps p { margin: 0; }
+
+  figure { margin: 16px 0 0; }
+  figure img {
+    display: block;
+    max-width: 100%;
+    border: 1px solid var(--rule);
+    border-radius: 10px;
+  }
+  figure img.tall { max-width: 260px; }
+  figure img.dialog { max-width: 330px; }
+  figcaption { color: var(--secondary); font-size: 14px; margin-top: 8px; }
+
+  ul.plain { margin: 0; padding-left: 20px; }
+  ul.plain li { margin-bottom: 10px; }
+
+  .note {
+    background: var(--card);
+    border: 1px solid var(--rule);
+    border-radius: 12px;
+    padding: 18px 22px;
+    margin: 24px 0 0;
+  }
+  .note p { margin: 0; color: var(--secondary); }
+  .note strong { color: var(--ink); }
+
+  kbd {
+    font: inherit;
+    font-weight: 600;
+    background: #EFE9DF;
+    border-radius: 5px;
+    padding: 1px 6px;
+  }
+  footer {
+    margin-top: 64px; padding-top: 20px;
+    border-top: 1px solid var(--rule);
+    color: var(--secondary); font-size: 14px;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --ink: #F2EDE5; --secondary: #A79F93; --paper: #1A1816;
+      --card: #231F1C; --rule: #3A342E;
+    }
+    :root:not([data-theme="light"]) kbd { background: #332D27; }
+    :root:not([data-theme="light"]) ol.steps > li::before { background: var(--ink); color: #1A1816; }
+  }
+</style>
+</head>
+<body>
+<div class="page">
+
+  <header>
+    <svg viewBox="0 0 317 280.535" aria-hidden="true">
+      <path transform="translate(-0.43457 -0.43417)" d="M186.439 279.819C153.055 284.629 109.971 272.803 109.971 272.803C109.971 272.803 6.45929 239.768 0.831123 140.844C-4.79704 41.92 50.2614 -7.45677 116.53 2.06042C143.141 5.8821 160.66 26.2414 160.66 26.2414C160.66 26.2414 174.664 -6.54128 231.657 1.79022C303.783 12.3338 327.214 94.2066 313.872 158.097C301.076 219.377 248.401 270.893 186.439 279.819Z" fill="currentColor"/>
+    </svg>
+    <h1>Bloom</h1>
+  </header>
+
+  <p class="standfirst">Bloom notices the time you spend with friends in person, asks how it felt, and shows you the story of your friendships across the week and the month.</p>
+
+  <p>This is a prototype, so it isn't signed by Apple and macOS will stop you the first time you open it. Getting past that takes about twenty seconds, once.</p>
+
+  <h2>Opening it the first time</h2>
+
+  <ol class="steps">
+    <li>
+      <p>Drag <strong>Bloom</strong> into your Applications folder, then double-click it. macOS will say it can't verify the developer — click <kbd>Done</kbd>. Nothing you do here will work yet; that's expected.</p>
+    </li>
+
+    <li>
+      <p>Open <strong>System Settings</strong> and choose <strong>Privacy &amp; Security</strong> in the sidebar.</p>
+      <figure>
+        <img class="tall" src="Screenshots/1 - System Settings.png" alt="The System Settings sidebar with Privacy and Security selected">
+      </figure>
+    </li>
+
+    <li>
+      <p>Scroll that page all the way down — past Location Services, Contacts, Photos and the rest — until you reach the <strong>Security</strong> section at the bottom.</p>
+      <figure>
+        <img class="tall" src="Screenshots/2 - Privacy and Security.png" alt="The Privacy and Security page, which you scroll past to reach Security">
+      </figure>
+    </li>
+
+    <li>
+      <p>Under Security you'll see <em>“Bloom” was blocked to protect your Mac.</em> Click <kbd>Open Anyway</kbd>.</p>
+      <figure>
+        <img src="Screenshots/3 - Open Anyway.png" alt="The Security section showing that Bloom was blocked, with an Open Anyway button">
+      </figure>
+    </li>
+
+    <li>
+      <p>Confirm with <kbd>Open Anyway</kbd>, then unlock with Touch ID or your password.</p>
+      <figure>
+        <img class="dialog" src="Screenshots/4 - Confirm.png" alt="A dialog asking whether to open Bloom, with Move to Trash, Open Anyway and Done">
+      </figure>
+    </li>
+  </ol>
+
+  <p>Bloom opens. From then on it's an ordinary double-click — you only do this once.</p>
+
+  <h2>What's real and what isn't</h2>
+
+  <div class="note">
+    <p><strong>This build never touches your data.</strong> It doesn't read your contacts, your location, your calendar or your photos. The permission screens are part of the prototype — tapping Allow grants nothing.</p>
+  </div>
+
+  <ul class="plain" style="margin-top:24px">
+    <li><strong>Signing up is simulated.</strong> No message is sent and nothing is checked. Type any phone number and any code, or just press the arrow.</li>
+    <li><strong>The friends are invented.</strong> Nora Patel and Leo Ortiz, along with every hangout, photo and recap you'll see, are made up for this build.</li>
+    <li><strong>The hangout log is pre-written.</strong> In a real version Bloom would notice these from your phone; here they're already in place so there's something to look at.</li>
+  </ul>
+
+  <h2>Finding your way around</h2>
+
+  <p>Bloom runs in a fixed iPhone-sized window. It starts at the beginning, so you'll walk through signing up before you reach the app itself.</p>
+
+  <ul class="plain" style="margin-top:24px">
+    <li><strong>Home</strong> suggests someone to see and asks how your last hangout felt. Answer one and watch the card settle into the list below.</li>
+    <li><strong>Friends</strong> is the dial — scroll it sideways, tap a face to open that friend and their history with you.</li>
+    <li><strong>Recaps</strong> is the week and the month as bubbles, sized by how often you saw someone. Tap one. Scroll past the top to step back a week.</li>
+    <li><strong>Profile</strong> is you, your settings, and the places you've saved.</li>
+  </ul>
+
+  <footer>
+    Bloom · a SwiftUI prototype for iPhone and Mac · requires macOS 14 or later
+  </footer>
+
+</div>
+</body>
+</html>

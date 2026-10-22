@@ -124,7 +124,7 @@ struct AvailabilityTimeline: View {
     }
 
     private var bandFill: Color {
-        style == .overlap ? KithTheme.availability : KithTheme.suggestionCard(isDark)
+        style == .overlap ? KithTheme.availability : KithTheme.uiFill(isDark)
     }
 
     private var tickFill: Color {

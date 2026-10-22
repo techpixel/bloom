@@ -282,18 +282,25 @@ extension View {
     /// Opens the real Messages composer when this device can send texts, and
     /// the look-alike thread otherwise (the simulator, an iPad without SMS).
     ///
-    /// Addressed by name, not by number: looking the friend up in Contacts
-    /// would fire the system permission prompt mid-demo, right after onboarding
-    /// has already mimed asking for it. Nothing here reads the phone.
+    /// Addressed to their number when they're a real person from the phone's
+    /// contacts, and by name otherwise: looking a made-up friend up in
+    /// Contacts would fire the system permission prompt mid-demo.
     func messageSheet(_ draft: Binding<MessageDraft?>) -> some View {
+        #if targetEnvironment(macCatalyst)
+        // A Mac can't send texts; the look-alike rises in Bloom's own drawer.
+        drawer(item: draft) { draft in
+            MessageThreadView(contact: draft.contact)
+        }
+        #else
         sheet(item: draft) { draft in
             if MFMessageComposeViewController.canSendText() {
-                MessageComposeSheet(recipients: [draft.contact.name], body: draft.body)
+                MessageComposeSheet(recipients: [draft.contact.phone ?? draft.contact.name], body: draft.body)
                     .ignoresSafeArea()
             } else {
                 MessageThreadView(contact: draft.contact)
             }
         }
+        #endif
     }
 }
 

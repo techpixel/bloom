@@ -100,7 +100,7 @@ struct RangeTabs: View {
                 Button { choose(option) } label: {
                     Text(option.title)
                         .font(.kithCaption)
-                        .kithCapCentered(13, relativeTo: .footnote)
+                        .kithCapCentered(15, relativeTo: .footnote)
                         .foregroundStyle(selection == option ? KithTheme.canvas(isDark) : ink)
                         .frame(maxWidth: .infinity)
                         .frame(height: 30)
@@ -132,13 +132,13 @@ struct RangeTabs: View {
                 Button { choose(option) } label: {
                     HStack(spacing: 4) {
                         Text(option.title)
-                            .font(KithType.font(.w90, 12, .caption))
-                            .kithCapCentered(12, relativeTo: .caption)
+                            .font(KithType.font(.w90, 15, .caption))
+                            .kithCapCentered(15, relativeTo: .caption)
                             .foregroundStyle(ink)
                         Text("\(counts[option] ?? 0)")
                             .font(.kithFine)
                             .monospacedDigit()
-                            .kithCapCentered(12, relativeTo: .caption)
+                            .kithCapCentered(15, relativeTo: .caption)
                             .foregroundStyle(chosen ? KithTheme.uiFill(isDark) : ink)
                             .frame(minWidth: 17, minHeight: 17)
                             .padding(.horizontal, 2)
@@ -314,16 +314,31 @@ extension View {
 extension View {
     /// A page that slides up over the one you're on and swipes back down to
     /// close: the friend page, their history, a hangout. The handle says it can.
+    ///
+    /// On a Mac the system's sheet is a small panel in the middle of the
+    /// window, nothing like the phone's, so there Bloom draws its own drawer.
     func drawer<Content: View>(isPresented: Binding<Bool>, @ViewBuilder content: @escaping () -> Content) -> some View {
+        #if targetEnvironment(macCatalyst)
+        fullScreenCover(isPresented: isPresented) {
+            FakeDrawer(close: { isPresented.wrappedValue = false }, content: content)
+        }
+        #else
         sheet(isPresented: isPresented) {
             content().drawerStyle()
         }
+        #endif
     }
 
     func drawer<Item: Identifiable, Content: View>(item: Binding<Item?>, @ViewBuilder content: @escaping (Item) -> Content) -> some View {
+        #if targetEnvironment(macCatalyst)
+        fullScreenCover(item: item) { value in
+            FakeDrawer(close: { item.wrappedValue = nil }, content: { content(value) })
+        }
+        #else
         sheet(item: item) { value in
             content(value).drawerStyle()
         }
+        #endif
     }
 
     fileprivate func drawerStyle() -> some View {
@@ -333,5 +348,148 @@ extension View {
             // Every drawer opens to the same height, editors included, so they
             // don't each arrive at a different size.
             .presentationDetents([.large])
+    }
+}
+
+#if targetEnvironment(macCatalyst)
+/// The phone's drawer, drawn by hand for the Mac: a cover that slides up
+/// from the bottom, as the Mac's full-window cover already does, with the
+/// drawer itself stopping just under the top, the same 28pt corners and
+/// handle, and the page behind dimming once it's up. Tap the strip of page
+/// above it, or drag the handle down, to close it.
+private struct FakeDrawer<Content: View>: View {
+    var close: () -> Void
+    @ViewBuilder var content: () -> Content
+
+    @State private var dimmed = false
+    @State private var drag: CGFloat = 0
+
+    var body: some View {
+        VStack(spacing: 0) {
+            // The page above the drawer: tapping it closes.
+            Color.black
+                .opacity(dimmed ? 0.25 : 0.001)
+                .frame(height: 10)
+                .contentShape(Rectangle())
+                .onTapGesture(perform: dismiss)
+                .accessibilityLabel("Close")
+                .accessibilityAddTraits(.isButton)
+
+            VStack(spacing: 0) {
+                handle
+                content()
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+            }
+            .background(alignment: .top) {
+                UnevenRoundedRectangle(topLeadingRadius: 28, topTrailingRadius: 28, style: .continuous)
+                    .fill(KithTheme.canvas(false))
+                    .ignoresSafeArea(edges: .bottom)
+            }
+            .clipShape(UnevenRoundedRectangle(topLeadingRadius: 28, topTrailingRadius: 28, style: .continuous))
+            .offset(y: drag)
+        }
+        .background {
+            Color.black.opacity(dimmed ? 0.25 : 0).ignoresSafeArea()
+        }
+        .presentationBackground(.clear)
+        .onAppear {
+            withAnimation(.easeOut(duration: 0.3).delay(0.15)) { dimmed = true }
+        }
+    }
+
+    /// The grabber, with room around it to drag by.
+    private var handle: some View {
+        Capsule()
+            .fill(KithTheme.secondary(false).opacity(0.45))
+            .frame(width: 36, height: 5)
+            .frame(maxWidth: .infinity)
+            .frame(height: 20)
+            .contentShape(Rectangle())
+            .gesture(
+                DragGesture()
+                    .onChanged { drag = max(0, $0.translation.height) }
+                    .onEnded { value in
+                        if value.translation.height > 120 || value.predictedEndTranslation.height > 260 {
+                            dismiss()
+                        } else {
+                            withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) { drag = 0 }
+                        }
+                    }
+            )
+            .accessibilityHidden(true)
+    }
+
+    /// The dim lifts first, then the cover slides back down.
+    private func dismiss() {
+        withAnimation(.easeIn(duration: 0.12)) { dimmed = false }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.12, execute: close)
+    }
+}
+#endif
+
+// MARK: - Progressive blur
+
+extension View {
+    /// Once a page scrolls, what passes under the top of the screen blurs
+    /// and fades out, strongest at the very top. Put it on a vertical
+    /// ScrollView.
+    func progressiveTopBlur() -> some View {
+        modifier(ProgressiveTopBlur())
+    }
+}
+
+private struct ProgressiveTopBlur: ViewModifier {
+    @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
+    @Environment(\.colorScheme) private var colorScheme
+    @State private var scrolled = false
+
+    /// How far the blur reaches below the safe area.
+    private static let reach: CGFloat = 36
+
+    func body(content: Content) -> some View {
+        if #available(iOS 18.0, *) {
+            content
+                .onScrollGeometryChange(for: Bool.self) { geometry in
+                    geometry.contentOffset.y + geometry.contentInsets.top > 2
+                } action: { _, now in
+                    scrolled = now
+                }
+                .overlay(alignment: .top) {
+                    GeometryReader { proxy in
+                        let height = proxy.safeAreaInsets.top + Self.reach
+                        // Solid through the safe area, then thinning out: the
+                        // blur gets weaker the further down it reaches.
+                        let mask = LinearGradient(
+                            stops: [
+                                .init(color: .black, location: 0),
+                                .init(color: .black, location: proxy.safeAreaInsets.top / height),
+                                .init(color: .clear, location: 1)
+                            ],
+                            startPoint: .top,
+                            endPoint: .bottom
+                        )
+                        ZStack {
+                            if reduceTransparency {
+                                KithTheme.canvas(colorScheme == .dark)
+                            } else {
+                                Rectangle().fill(.ultraThinMaterial)
+                                // A second, shorter pass so the top blurs
+                                // hardest.
+                                Rectangle().fill(.ultraThinMaterial)
+                                    .mask(LinearGradient(colors: [.black, .clear], startPoint: .top, endPoint: .center))
+                            }
+                        }
+                        .mask(mask)
+                        .frame(height: height)
+                        .ignoresSafeArea(edges: .top)
+                    }
+                    .allowsHitTesting(false)
+                    .accessibilityHidden(true)
+                    .opacity(scrolled ? 1 : 0)
+                    .animation(.easeOut(duration: 0.2), value: scrolled)
+                }
+        } else {
+            content
+        }
     }
 }

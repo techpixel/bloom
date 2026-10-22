@@ -50,11 +50,6 @@ enum KithTheme {
     /// Grip on each edge of a chosen slot — #1BB773
     static let slotHandle = Color(red: 0.106, green: 0.718, blue: 0.451)
 
-    /// Suggestion cards, unavailable day tiles, neutral timeline bands — #EDE8E0
-    static func suggestionCard(_ dark: Bool) -> Color {
-        dark ? Color(white: 0.15) : Color(red: 0.929, green: 0.910, blue: 0.878)
-    }
-
     /// Month and date headings above the calendar — #374151
     static func calendarHeading(_ dark: Bool) -> Color {
         dark ? Color(red: 0.733, green: 0.769, blue: 0.824) : Color(red: 0.216, green: 0.255, blue: 0.318)

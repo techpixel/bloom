@@ -72,9 +72,12 @@ extension Font {
     /// The "bloom" wordmark — Worldstar @ 40
     static var bloomWordmark: Font { KithType.wordmark(40, .largeTitle) }
     // From Body down, the comp's sizes sat a step below Apple's reading sizes
-    // (names at 13, details at 12, fine print at 11), so each is raised to the
-    // HIG text style it plays the part of: Body 17, Subheadline 15, Footnote 13,
-    // Caption 12.
+    // (names at 13, details at 12, fine print at 11). Raising each to the HIG
+    // style it plays the part of still left Home and Recaps reading small, so
+    // 15 is the floor now: Body is 17 and everything under it is 15, told apart
+    // by weight rather than by size. Several of the names below therefore
+    // resolve to the same face and size, and keep their own names only because
+    // each answers a different text style as Dynamic Type scales.
 
     /// Kith/Typography/Body & button — 90 @ 17 (HIG Body; the comp has 16)
     static var kithBody: Font { KithType.font(.w90, 17, .body) }
@@ -84,40 +87,58 @@ extension Font {
     static var kithSecondary: Font { KithType.font(.w90, 15, .subheadline) }
     /// Names and row titles — 130 @ 15 (HIG Subheadline; the comp has 13)
     static var kithCardTitle: Font { KithType.font(.w130, 15, .subheadline) }
-    /// Timestamps beside a row — 90 @ 13
-    static var kithFootnote: Font { KithType.font(.w90, 13, .footnote) }
-    /// Kith/Typography/Caption — 90 @ 13 (HIG Footnote; the comp has 12)
-    static var kithCaption: Font { KithType.font(.w90, 13, .footnote) }
+    /// Timestamps beside a row — 90 @ 15
+    static var kithFootnote: Font { KithType.font(.w90, 15, .footnote) }
+    /// Kith/Typography/Caption — 90 @ 15 (the comp has 12)
+    static var kithCaption: Font { KithType.font(.w90, 15, .footnote) }
     /// Caption at the heavier weight, for dates above the timeline.
-    static var kithCaptionStrong: Font { KithType.font(.w130, 13, .footnote) }
-    /// The mutual friend's name inside a caption ("Friends with **Ishan**") — 150 @ 13
-    static var kithCaptionHeavy: Font { KithType.font(.w150, 13, .footnote) }
-    /// Suggestion card detail — 60 @ 12 (HIG Caption; the comp has 11)
-    static var kithFine: Font { KithType.font(.w90, 12, .caption) }
-    /// Feeling tags on a hangout row — 130 @ 12
-    static var kithFineStrong: Font { KithType.font(.w130, 12, .caption) }
+    static var kithCaptionStrong: Font { KithType.font(.w130, 15, .footnote) }
+    /// Suggestion card detail — 90 @ 15 (the comp has 11)
+    static var kithFine: Font { KithType.font(.w90, 15, .caption) }
+    /// Feeling tags on a hangout row — 130 @ 15
+    static var kithFineStrong: Font { KithType.font(.w130, 15, .caption) }
     /// A section title inside a card — 130 @ 16
     static var kithSectionTitle: Font { KithType.font(.w130, 16, .callout) }
-    /// The line under a row's title, and the small labels in a reflection — 90 @ 14
-    static var kithRowDetail: Font { KithType.font(.w90, 14, .subheadline) }
-    /// A week range over a group of history entries — 90 @ 14
-    static var kithSubrange: Font { KithType.font(.w90, 14, .subheadline) }
+    /// The line under a row's title, and the small labels in a reflection — 90 @ 15
+    static var kithRowDetail: Font { KithType.font(.w90, 15, .subheadline) }
+    /// A week range over a group of history entries — 90 @ 15
+    static var kithSubrange: Font { KithType.font(.w90, 15, .subheadline) }
     /// The welcome tagline — 90 @ 15.62
     static var kithTagline: Font { KithType.font(.w90, 15.62, .subheadline) }
     /// A weekday initial in the week strip — 90 @ 26.841
     static var kithDayLetter: Font { KithType.font(.w90, 26.841, .title) }
     /// Initials in a contact avatar — 90 @ 19
     static var kithInitials: Font { KithType.font(.w90, 19, .title3) }
-    /// Initials in a 40pt suggestion avatar — 150 @ 16
-    static var kithInitialsSmall: Font { KithType.font(.w150, 16, .callout) }
+}
+
+extension KithType {
+    /// How many lines `text` wraps to at `width` in this face and size, as
+    /// Dynamic Type scales it within Bloom's range. For a row of cards that
+    /// keep one height: each saves room for the longest.
+    static func lineCount(_ text: String, _ weight: Weight, _ size: CGFloat, _ style: UIFont.TextStyle, width: CGFloat) -> Int {
+        let current = UIApplication.shared.preferredContentSizeCategory
+        let category = min(max(current, .large), .accessibilityMedium)
+        let scaled = UIFontMetrics(forTextStyle: style)
+            .scaledValue(for: size, compatibleWith: UITraitCollection(preferredContentSizeCategory: category))
+        let font = UIFont(name: weight.rawValue, size: scaled) ?? .systemFont(ofSize: scaled)
+        let box = (text as NSString).boundingRect(
+            with: CGSize(width: width, height: .greatestFiniteMagnitude),
+            options: [.usesLineFragmentOrigin],
+            attributes: [.font: font],
+            context: nil
+        )
+        return max(1, Int((box.height / font.lineHeight).rounded()))
+    }
 }
 
 extension View {
     /// The layouts are positioned against the comps' fixed frames, so type
     /// scales up to the first accessibility size and then holds. Past that the
-    /// absolute placement would start to collide.
+    /// absolute placement would start to collide. It never goes below the
+    /// default size either: a smaller text setting would take the 15pt styles
+    /// under 15pt, and nothing in Bloom is smaller than that.
     func kithTypeScaling() -> some View {
-        dynamicTypeSize(...DynamicTypeSize.accessibility1)
+        dynamicTypeSize(.large ... .accessibility1)
     }
 }
 

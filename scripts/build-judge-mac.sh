@@ -23,8 +23,18 @@ xcodebuild \
   CODE_SIGN_IDENTITY="-" CODE_SIGN_STYLE=Manual DEVELOPMENT_TEAM="" \
   -quiet build
 
+# What the judge unzips: the app, the instructions for getting past
+# Gatekeeper, and the screenshots those refer to. An unsigned app is blocked
+# on first launch, so the way through ships beside it rather than in a message
+# that can get separated from the download.
 mkdir -p "$out"
-rm -rf "$out/Bloom.app" "$out/Bloom-demo.zip"
-ditto "$derived/Build/Products/Release-maccatalyst/SVSD.app" "$out/Bloom.app"
-(cd "$out" && ditto -c -k --keepParent Bloom.app Bloom-demo.zip)
+rm -rf "$out/Bloom" "$out/Bloom-demo.zip"
+mkdir -p "$out/Bloom"
+ditto "$derived/Build/Products/Release-maccatalyst/SVSD.app" "$out/Bloom/Bloom.app"
+ditto "$root/judge-package" "$out/Bloom"
+find "$out/Bloom" -name .DS_Store -delete
+(cd "$out" && ditto -c -k --sequesterRsrc --keepParent Bloom Bloom-demo.zip)
+# Bloom-for-Mac.zip is the name the judge build gets shared under. Keep it in
+# step here, or it silently goes stale while the other zips are rebuilt.
+cp "$out/Bloom-demo.zip" "$out/Bloom-for-Mac.zip"
 echo "Built $out/Bloom-demo.zip"

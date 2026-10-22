@@ -40,7 +40,7 @@ struct ProfileView: View {
     private var isDark: Bool { colorScheme == .dark }
     private var ink: Color { KithTheme.ink(isDark) }
     private var secondary: Color { KithTheme.secondary(isDark) }
-    private var card: Color { KithTheme.suggestionCard(isDark) }
+    private var card: Color { KithTheme.uiFill(isDark) }
 
     // Measured off the comp, an iPhone 16 frame (393 × 852), and scaled by the
     // screen's width like the Friends tab. Type is left to Dynamic Type.
@@ -91,6 +91,7 @@ struct ProfileView: View {
             }
             .padding(.bottom, 24)
         }
+        .progressiveTopBlur()
         .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { screenWidth = $0 }
         .scrollDismissesKeyboard(.immediately)
         .background(KithTheme.canvas(isDark))
@@ -171,7 +172,7 @@ struct ProfileView: View {
         Button(action: beginEditingProfile) {
             Text("Edit")
                 .font(.kithCaptionStrong)
-                .kithCapCentered(13, relativeTo: .footnote)
+                .kithCapCentered(15, relativeTo: .footnote)
                 .foregroundStyle(secondary)
                 .padding(.horizontal, 18)
                 .frame(height: 32)
@@ -295,7 +296,7 @@ struct ProfileView: View {
         Button(action: action) {
             Text(title)
                 .font(.kithCaption)
-                .kithCapCentered(13, relativeTo: .footnote)
+                .kithCapCentered(15, relativeTo: .footnote)
                 .foregroundStyle(secondary)
                 .padding(.horizontal, 14)
                 .frame(height: 36)
@@ -383,7 +384,7 @@ struct ProfileView: View {
             } label: {
                 Text(connected ? "Connected" : "Connect")
                     .font(.kithCaption)
-                    .kithCapCentered(13, relativeTo: .footnote)
+                    .kithCapCentered(15, relativeTo: .footnote)
                     .foregroundStyle(connected ? KithTheme.secondaryOnFill(isDark) : KithTheme.canvas(isDark))
                     .lineLimit(1)
                     .padding(.horizontal, 12)
@@ -590,9 +591,22 @@ struct ProfileView: View {
 /// Your chosen profile photo, kept in the app's own Documents folder. The system
 /// picker hands over only the photo you pick, so no library access is needed.
 enum ProfilePhotoStore {
+    /// Application Support, not Documents. On iOS both sit inside the app's
+    /// container, but the Mac build is unsandboxed, where `.documentDirectory`
+    /// is the user's real ~/Documents — so saving a profile photo there made
+    /// macOS ask for access to their documents at launch. This is app-owned
+    /// data, so it belongs here and asks for nothing.
     private static var url: URL {
-        FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
-            .appendingPathComponent("profile-photo.jpg")
+        let manager = FileManager.default
+        let base = (try? manager.url(
+            for: .applicationSupportDirectory,
+            in: .userDomainMask,
+            appropriateFor: nil,
+            create: true
+        )) ?? manager.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+        let folder = base.appendingPathComponent(Bundle.main.bundleIdentifier ?? "Bloom", isDirectory: true)
+        try? manager.createDirectory(at: folder, withIntermediateDirectories: true)
+        return folder.appendingPathComponent("profile-photo.jpg")
     }
 
     static func load() -> UIImage? {

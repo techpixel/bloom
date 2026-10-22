@@ -35,7 +35,9 @@ enum DemoCast {
                 .today: "You’re both free at 4:00 PM.",
                 .thisWeek: "You’re both free Wednesday at 4:00 PM."
             ],
-            idea: "grab a coffee?"
+            idea: "grab a coffee?",
+            outing: .coffee,
+            place: "Vienna Cafe"
         ),
         TodayNudge(
             contact: leo,
@@ -45,7 +47,8 @@ enum DemoCast {
                 .tomorrow: "You’re both free at 6:00 PM.",
                 .thisWeek: "You’re both free Friday evening."
             ],
-            idea: "split a plate of fries?"
+            idea: "split a plate of fries?",
+            outing: .fries
         )
     ]
 
@@ -71,7 +74,8 @@ enum DemoCast {
                 place: "Climbing gym, Lafayette",
                 feelings: [.energized, .connected],
                 reflection: "we finally got the purple route. leo talked me through the last move and i didn’t fall for once",
-                highlightIn: [.week]
+                highlightIn: [.week],
+                date: RecentHangout.daysAgo(1)
             ),
             RecentHangout(
                 contact: nora,
@@ -80,7 +84,8 @@ enum DemoCast {
                 startTime: "7 PM",
                 place: "Home",
                 feelings: [.atEase],
-                highlightIn: [.week, .month]
+                highlightIn: [.week, .month],
+                date: RecentHangout.daysAgo(2)
             )
         ]
         let plans = [
@@ -90,6 +95,8 @@ enum DemoCast {
             ("Coffee", "10 AM", "1 hr 10 min", "Vienna Cafe")
         ]
         let days = ["Friday", "Thursday", "Wednesday", "Tuesday"]
+        // Older ones are all answered; unanswered, they'd have dropped out.
+        let answered: [Set<Feeling>] = [[.connected], [.atEase], [.energized], [.atEase, .connected]]
         var step = 0
         for (contact, count) in [(nora, 7), (leo, 5)] {
             for _ in 0..<count {
@@ -100,7 +107,9 @@ enum DemoCast {
                     detail: "\(days[step % days.count]) · \(plan.2) · \(plan.3)",
                     startTime: plan.1,
                     place: "\(plan.3), Lafayette",
-                    photos: RecentHangout.photos(at: plan.3, seed: step)
+                    photos: RecentHangout.photos(at: plan.3, seed: step),
+                    feelings: answered[step % answered.count],
+                    date: RecentHangout.daysAgo(3 + step)
                 ))
                 step += 1
             }
@@ -112,9 +121,27 @@ enum DemoCast {
 
     static let circle: [KithContact] = [nora, leo]
 
-    /// Nobody else: Nora and Leo are the judge's only friends, so there are
-    /// no requests, suggestions or contacts to invite anywhere in the app.
+    /// Nora and Leo are the judge's only friends, so there are no requests.
     static let requests: [FriendRequest] = []
+
+    /// People in the judge's contacts who aren't on Bloom yet, to invite over
+    /// Messages, so Friends doesn't sit empty. All made up, and none of them
+    /// a friend: inviting one sends a text, it doesn't add them.
+    static let invitees: [FriendSuggestion] = [
+        ("Maya Lindqvist", FriendBlob.apricot, Connection.friendsWith("Nora")),
+        ("Jonah Reyes", .turquoise, .friendsWith("Leo")),
+        ("Ava Okafor", .lavender, .note("In your contacts")),
+        ("Ravi Menon", .lime, .friendsWith("Nora", andOthers: true)),
+        ("Clara Duval", .coral, .note("In your contacts")),
+        ("Owen Park", .mint, .friendsWith("Leo")),
+        ("Isla Moreno", .butter, .note("In your contacts")),
+        ("Theo Brandt", .periwinkle, .note("In your contacts"))
+    ].map { name, blob, connection in
+        FriendSuggestion(
+            contact: KithContact(name: name, face: initials(name, blob), isOnKith: false),
+            connection: connection
+        )
+    }
 
     static let mutuals = ["Nora", "Leo"]
 

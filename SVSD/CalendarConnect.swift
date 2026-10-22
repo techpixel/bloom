@@ -78,7 +78,7 @@ struct GoogleCalendarConnectSheet: View {
     private var isDark: Bool { colorScheme == .dark }
     private var ink: Color { KithTheme.ink(isDark) }
     private var secondary: Color { KithTheme.secondary(isDark) }
-    private var card: Color { KithTheme.suggestionCard(isDark) }
+    private var card: Color { KithTheme.uiFill(isDark) }
 
     var body: some View {
         NavigationStack {

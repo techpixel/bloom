@@ -117,7 +117,9 @@ struct OnboardingView: View {
     /// The blob trails a drag at a slower rate, so it reads as being behind the page.
     @State private var blobDrift: CGFloat = 0
 
-    private let friends = Friend.sample
+    /// The comps' people, plus the phone's own contacts once you've allowed
+    /// them (Release builds on an iPhone only).
+    @State private var friends = Friend.sample
 
     private var isDark: Bool { colorScheme == .dark }
     private var surface: Color { KithTheme.canvas(isDark) }
@@ -856,7 +858,12 @@ struct OnboardingView: View {
                 guard page == step, !answeredPermissions.contains(page), permissionAlert == nil else { return }
                 try? await Task.sleep(for: .milliseconds(650))
                 guard page == step, !answeredPermissions.contains(page), permissionAlert == nil else { return }
-                permissionAlert = .permission(for: page)
+                // Where Bloom really reads contacts, iOS asks, not the stand-in.
+                if page == .contacts, DeviceContacts.enabled {
+                    resolvePermission(granted: await DeviceContacts.requestAccess())
+                } else {
+                    permissionAlert = .permission(for: page)
+                }
             }
 
             // Greyed until you've answered the prompt.
@@ -882,6 +889,21 @@ struct OnboardingView: View {
         }
         answeredPermissions.insert(step)
         if granted { demoPermissions.insert(step) }
+        if step == .contacts, granted, DeviceContacts.enabled {
+            // The comps' people become real ones from here on.
+            Recast.prepare()
+            friends = Friend.sample
+            Task {
+                guard let people = await DeviceContacts.load() else { return }
+                let known = Set(friends.map(\.name))
+                friends += people.filter { !known.contains($0.name) }.map { person in
+                    if case let .picture(image) = person.face {
+                        return Friend(name: person.name, face: .picture(image))
+                    }
+                    return Friend(name: person.name, face: .tint(FriendBlob.forName(person.name).color))
+                }
+            }
+        }
     }
 
     /// The calendar page has two ways in, so it counts as answered once
@@ -964,8 +986,10 @@ struct OnboardingView: View {
                     Text(connected ? source.connectedDetail(calendars: googleCalendars) : source.pitch)
                         .font(.kithCaption)
                         .foregroundStyle(secondary)
-                        .lineLimit(1)
-                        .minimumScaleFactor(0.85)
+                        // At 15pt the longer pitch no longer fits beside the
+                        // chevron; the row grows a line rather than eliding.
+                        .lineLimit(2)
+                        .fixedSize(horizontal: false, vertical: true)
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
 
@@ -993,7 +1017,9 @@ struct OnboardingView: View {
         case .contacts:
             return (
                 "Contacts",
-                "Bloom uses sample contacts to find friends already on the app. This demo doesn’t read or upload your contacts."
+                DeviceContacts.enabled
+                    ? "Bloom shows people from your contacts so you can find friends and invite others. Your contacts stay on this phone."
+                    : "Bloom uses sample contacts to find friends already on the app. This demo doesn’t read or upload your contacts."
             )
         case .location:
             return (
@@ -1055,7 +1081,7 @@ struct OnboardingView: View {
             .padding(.bottom, size.height * (1 - 664 / designHeight))
 
             pillButton(
-                enough ? "continue" : "add 2 friends",
+                enough ? "Continue" : "Add 2 Friends",
                 size: size,
                 enabled: enough,
                 accessibilityHint: enough ? nil : "Add at least two friends to continue"
@@ -1098,7 +1124,6 @@ struct OnboardingView: View {
                 .font(.kithBody)
                 .foregroundStyle(mark)
                 .lineLimit(1)
-                .minimumScaleFactor(0.85)
                 .frame(maxWidth: .infinity, alignment: .leading)
 
             Button {
@@ -1180,6 +1205,12 @@ struct OnboardingView: View {
                     .foregroundStyle(mark)
             }
             .frame(width: 50, height: 50)
+        case .picture(let image):
+            Image(uiImage: image)
+                .resizable()
+                .scaledToFill()
+                .frame(width: 50, height: 50)
+                .clipShape(Circle())
         }
     }
 
@@ -1348,11 +1379,30 @@ struct Friend: Identifiable {
         /// One of the comp's exported avatar plates.
         case plate(String)
         case tint(Color)
+        /// A photo from the phone's own contact card.
+        case picture(UIImage)
     }
 
     let name: String
     var face: Face
     var isOnKith = false
+
+    /// Someone from the comps comes out as the real person playing them
+    /// where Bloom reads the phone's contacts (see `Recast`).
+    init(name: String, face: Face, isOnKith: Bool = false) {
+        if let real = Recast.person(playing: name) {
+            self.name = real.name
+            if case let .picture(image) = real.face {
+                self.face = .picture(image)
+            } else {
+                self.face = .tint(FriendBlob.forName(real.name).color)
+            }
+        } else {
+            self.name = name
+            self.face = face
+        }
+        self.isOnKith = isOnKith
+    }
 
     var id: String { name }
 
@@ -1361,13 +1411,15 @@ struct Friend: Identifiable {
     }
 
     /// The four from the comp, then enough others to make the list feel real.
-    static let sample: [Friend] = DemoCast.isJudge ? DemoCast.onboardingFriends : [
+    /// Made fresh each time, so it picks up the real people once onboarding
+    /// is given the phone's contacts.
+    static var sample: [Friend] { DemoCast.isJudge ? DemoCast.onboardingFriends : [
         Friend(name: "Manitej Boorgu", face: .photo("FriendAvatar"), isOnKith: true),
         Friend(name: "Michelle Xuan", face: .plate("AvatarPink")),
         Friend(name: "Ray Arayilikath", face: .plate("AvatarYellow")),
         Friend(name: "Jadden Picardal", face: .photo("AvatarJadden")),
         Friend(name: "Ishan Goyal", face: .tint(Color(red: 0.72, green: 0.85, blue: 0.98))),
-        Friend(name: "Priya Raghunathan", face: .tint(Color(red: 0.76, green: 0.69, blue: 1.0)), isOnKith: true),
+        Friend(name: "Evan Raghunathan", face: .tint(Color(red: 0.76, green: 0.69, blue: 1.0)), isOnKith: true),
         Friend(name: "Dev Shah", face: .tint(Color(red: 0.55, green: 0.90, blue: 0.75))),
         Friend(name: "Nina Alvarez", face: .tint(Color(red: 1.0, green: 0.78, blue: 0.69))),
         Friend(name: "Theo Lindqvist", face: .tint(Color(red: 0.98, green: 0.88, blue: 0.56))),
@@ -1375,6 +1427,7 @@ struct Friend: Identifiable {
         Friend(name: "Kenji Watanabe", face: .tint(Color(red: 0.70, green: 0.92, blue: 0.92))),
         Friend(name: "Sofia Marchetti", face: .tint(Color(red: 1.0, green: 0.72, blue: 0.78)))
     ]
+    }
 }
 
 // Permission pages only advance the prototype; they never access device data.

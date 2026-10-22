@@ -44,6 +44,7 @@ extension MeetupPhoto {
 /// photos from it, and your private reflection. When Bloom notices you keep
 /// coming back to a place, it offers to let you name it.
 struct MeetupDetailView: View {
+    @Environment(HangoutStore.self) private var store
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.colorScheme) private var colorScheme
 
@@ -65,6 +66,10 @@ struct MeetupDetailView: View {
     @State private var screenWidth: CGFloat = 393
     @State private var viewingPhoto: Int?
     @FocusState private var nameFocused: Bool
+    @State private var addingTag = false
+    @State private var draftTag = ""
+    @FocusState private var tagFocused: Bool
+    @Namespace private var tagMorph
 
     private var isDark: Bool { colorScheme == .dark }
     private var ink: Color { KithTheme.ink(isDark) }
@@ -72,8 +77,12 @@ struct MeetupDetailView: View {
     private var fill: Color { KithTheme.uiFill(isDark) }
     private var scale: CGFloat { screenWidth / 393 }
 
-    /// Ways people tag a place they keep returning to.
-    private static let tagIdeas = ["study", "outside", "coffee", "cozy"]
+    /// How a place you keep returning to feels.
+    private static let tagIdeas = ["casual", "studying", "dinner", "movie"]
+    /// Between tags side by side, between rows of tags, and around them.
+    private static let tagGap: CGFloat = 6
+    private static let tagRowGap: CGFloat = 8
+    private static let rowGap: CGFloat = 10
 
     private var offersToName: Bool {
         hangout.visitsThisMonth >= 3 && hangout.placeName == nil && !hangout.namingDismissed
@@ -116,7 +125,8 @@ struct MeetupDetailView: View {
                     placeRow
                         .padding(.top, 6)
 
-                    if offersToName && namingArrived {
+                    // Bloom's offer, or you renaming a place you named before.
+                    if (offersToName && namingArrived) || (naming && hangout.placeName != nil) {
                         namingCard
                             .padding(.top, 13)
                             .transition(.opacity.combined(with: .scale(scale: 0.92)).combined(with: .offset(y: 6)))
@@ -125,7 +135,7 @@ struct MeetupDetailView: View {
                     VStack(alignment: .leading, spacing: 15) {
                         photosSection
                         Rectangle()
-                            .fill(KithTheme.suggestionCard(isDark))
+                            .fill(KithTheme.uiFill(isDark))
                             .frame(height: 2)
                         reflectionSection
                     }
@@ -134,6 +144,7 @@ struct MeetupDetailView: View {
                 .padding(.horizontal, 20)
                 .padding(.bottom, 40)
             }
+            .progressiveTopBlur()
             .scrollDismissesKeyboard(.interactively)
 
         }
@@ -150,6 +161,10 @@ struct MeetupDetailView: View {
             Task { await addPhoto(item) }
         }
         .sensoryFeedback(.success, trigger: savedPlace)
+        // The offer can also arrive while you're here, from the demo remote.
+        .sensoryFeedback(trigger: offersToName) { _, offered in offered ? .impact(weight: .light) : nil }
+        .onAppear { store.openEntry = hangout.id }
+        .onDisappear { if store.openEntry == hangout.id { store.openEntry = nil } }
         .task {
             guard !namingArrived else { return }
             guard !reduceMotion else {
@@ -189,15 +204,28 @@ struct MeetupDetailView: View {
                 .accessibilityHidden(true)
 
             // Nudged onto the pin's centre: AUTHENTIC Sans sits its letters high.
+            // Once you've named it, your name is the place, and tapping it
+            // lets you change the name or its tags.
             if let name = hangout.placeName {
-                Text(name)
-                    .font(.kithCardTitle)
-                    .foregroundStyle(ink)
-                    .kithCapCentered(15, relativeTo: .subheadline)
-                Text("· \(hangout.place)")
-                    .font(.kithSecondary)
-                    .foregroundStyle(secondary)
-                    .kithCapCentered(15, relativeTo: .subheadline)
+                Button(action: beginRenaming) {
+                    HStack(spacing: 6) {
+                        Text(name)
+                            .font(.kithCardTitle)
+                            .foregroundStyle(ink)
+                            .kithCapCentered(15, relativeTo: .subheadline)
+                        Image("PencilIcon")
+                            .renderingMode(.template)
+                            .resizable()
+                            .frame(width: 14, height: 14)
+                            .foregroundStyle(secondary)
+                    }
+                    .frame(minHeight: 44)
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(PressableButtonStyle())
+                .padding(.vertical, -10)
+                .accessibilityLabel("Rename \(name)")
+                .disabled(naming)
             } else {
                 Text(hangout.place)
                     .font(.kithSecondary)
@@ -206,8 +234,8 @@ struct MeetupDetailView: View {
             }
         }
         .lineLimit(1)
-        .minimumScaleFactor(0.85)
-        .accessibilityElement(children: .combine)
+        // Read as one line, unless the name is a button of its own.
+        .accessibilityElement(children: hangout.placeName == nil ? .combine : .contain)
     }
 
     // MARK: - Naming a place
@@ -246,6 +274,7 @@ struct MeetupDetailView: View {
                 promptButton("PromptConfirm", label: "Name this place") {
                     draftName = ""
                     draftTags = []
+                    addingTag = false
                     naming = true
                     nameFocused = true
                 }
@@ -270,63 +299,159 @@ struct MeetupDetailView: View {
     }
 
     private var nameEditor: some View {
-        Group {
-            HStack(spacing: 6) {
-                TextField("Name", text: $draftName)
-                    .font(.kithFine)
-                    .foregroundStyle(ink)
-                    .tint(ink)
-                    .focused($nameFocused)
-                    .submitLabel(.done)
-                    .onSubmit(savePlace)
-                    .accessibilityLabel("Place name")
-                Image("PencilIcon")
-                    .renderingMode(.template)
-                    .resizable()
-                    .frame(width: 14, height: 14)
-                    .foregroundStyle(ink)
-                    .accessibilityHidden(true)
-            }
-            .padding(.horizontal, 12)
-            .frame(width: 200, height: 30)
-            .background(KithTheme.thumbnail(isDark), in: Capsule())
+        // The name, the tags and Save sit a row gap apart; the tags
+        // themselves sit closer.
+        VStack(spacing: Self.rowGap) {
+            TextField("Name", text: $draftName)
+                .font(.kithSecondary)
+                .foregroundStyle(ink)
+                .tint(ink)
+                .focused($nameFocused)
+                .submitLabel(.done)
+                // Done puts the keyboard away and nothing else: saving from
+                // here would skip the tags before you'd picked any.
+                .onSubmit { nameFocused = false }
+                .accessibilityLabel("Place name")
+                .padding(.horizontal, 14)
+                .frame(maxWidth: .infinity)
+                .frame(height: 40)
+                .background(KithTheme.thumbnail(isDark), in: Capsule())
 
-            FlowLayout(spacing: 5, lineSpacing: 5) {
-                ForEach(Self.tagIdeas, id: \.self) { tag in
-                    let on = draftTags.contains(tag)
-                    Button {
-                        if on { draftTags.removeAll { $0 == tag } } else { draftTags.append(tag) }
-                    } label: {
-                        Text(on ? "✓ \(tag)" : "+ \(tag)")
-                            .font(.kithFine)
-                            .foregroundStyle(on ? ink : KithTheme.secondary(isDark))
-                            .padding(.horizontal, 8)
-                            .frame(height: 22)
-                            .background(on ? KithTheme.feelingSelected : KithTheme.canvas(isDark), in: Capsule())
+            tagGrid
+
+            HStack(spacing: 10) {
+                // Renaming can be called off; Bloom's first offer has Not Now.
+                if hangout.placeName != nil {
+                    Button(action: cancelNaming) {
+                        Text("Cancel")
+                            .font(.kithCardTitle)
+                            .kithCapCentered(15, relativeTo: .subheadline)
+                            .foregroundStyle(ink)
+                            .padding(.horizontal, 20)
+                            .frame(height: 36)
+                            .overlay(Capsule().strokeBorder(secondary, lineWidth: 1))
+                            .frame(minHeight: 44)
+                            .contentShape(Rectangle())
                     }
                     .buttonStyle(PressableButtonStyle())
-                    .accessibilityLabel("Tag \(tag)")
-                    .accessibilityAddTraits(on ? .isSelected : [])
+                }
+                Button(action: savePlace) {
+                    Text("Save")
+                        .font(.kithCardTitle)
+                        .kithCapCentered(15, relativeTo: .subheadline)
+                        .foregroundStyle(fill)
+                        .padding(.horizontal, 20)
+                        .frame(height: 36)
+                        .background(ink, in: Capsule())
+                        .frame(minHeight: 44)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(PressableButtonStyle())
+                .disabled(draftName.trimmingCharacters(in: .whitespaces).isEmpty)
+                .opacity(draftName.trimmingCharacters(in: .whitespaces).isEmpty ? 0.45 : 1)
+            }
+            // The 44pt target overhangs the 36pt pill by 4pt each way; take
+            // that back so the gap above is the row gap, and keep it out of
+            // the card's padding below.
+            .padding(.top, -4)
+            .padding(.bottom, -8)
+        }
+    }
+
+    /// The tags in three even columns, edge to edge with the name above,
+    /// then a + that opens into a field for a tag of your own. Tags you make
+    /// stay on offer for every place after.
+    private var tagGrid: some View {
+        let tags = Self.tagIdeas + store.customPlaceTags.filter { !Self.tagIdeas.contains($0) }
+
+        return VStack(spacing: Self.tagRowGap) {
+            LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: Self.tagGap), count: 3), spacing: Self.tagRowGap) {
+                ForEach(tags, id: \.self) { tag in
+                    tagPill(tag)
+                }
+                if !addingTag {
+                    Button(action: beginNewTag) {
+                        Image(systemName: "plus")
+                            .font(.system(size: 15, weight: .semibold))
+                            .foregroundStyle(secondary)
+                            .frame(maxWidth: .infinity)
+                            .frame(height: 34)
+                            .background(KithTheme.canvas(isDark), in: Capsule())
+                            .matchedGeometryEffect(id: "newTag", in: tagMorph)
+                            .padding(.vertical, 5)
+                            .contentShape(Rectangle())
+                            .padding(.vertical, -5)
+                    }
+                    .buttonStyle(PressableButtonStyle())
+                    .accessibilityLabel("New Tag")
                 }
             }
-            .frame(maxWidth: 260)
 
-            Button(action: savePlace) {
-                Text("Save")
-                    .font(.kithCaption)
-                    .kithCapCentered(13, relativeTo: .footnote)
-                    .foregroundStyle(fill)
-                    .padding(.horizontal, 16)
-                    .frame(height: 28)
-                    .background(ink, in: Capsule())
-                    .frame(minHeight: 44)
-                    .contentShape(Rectangle())
+            if addingTag {
+                TextField("New tag", text: $draftTag)
+                    .font(.kithSecondary)
+                    .foregroundStyle(ink)
+                    .tint(ink)
+                    .focused($tagFocused)
+                    .submitLabel(.done)
+                    .onSubmit(addTag)
+                    .accessibilityLabel("New tag")
+                    .padding(.horizontal, 14)
+                    .frame(maxWidth: .infinity)
+                    .frame(height: 34)
+                    .background(KithTheme.canvas(isDark), in: Capsule())
+                    .matchedGeometryEffect(id: "newTag", in: tagMorph)
             }
-            .buttonStyle(PressableButtonStyle())
-            .disabled(draftName.trimmingCharacters(in: .whitespaces).isEmpty)
-            .opacity(draftName.trimmingCharacters(in: .whitespaces).isEmpty ? 0.45 : 1)
-            .padding(.vertical, -8)
         }
+        .onChange(of: tagFocused) { _, focused in
+            // Tapping away keeps what you typed, or folds back to the +.
+            if !focused, addingTag { addTag() }
+        }
+    }
+
+    private func tagPill(_ tag: String) -> some View {
+        let on = draftTags.contains(tag)
+        return Button {
+            if on { draftTags.removeAll { $0 == tag } } else { draftTags.append(tag) }
+        } label: {
+            Text(tag)
+                .font(.kithSecondary)
+                .kithCapCentered(15, relativeTo: .subheadline)
+                .foregroundStyle(on ? ink : secondary)
+                .lineLimit(1)
+                .padding(.horizontal, 8)
+                .frame(maxWidth: .infinity)
+                .frame(height: 34)
+                .background(on ? KithTheme.feelingSelected : KithTheme.canvas(isDark), in: Capsule())
+                // A 44pt target without spreading the rows apart.
+                .padding(.vertical, 5)
+                .contentShape(Rectangle())
+                .padding(.vertical, -5)
+        }
+        .buttonStyle(PressableButtonStyle())
+        .accessibilityLabel("Tag \(tag)")
+        .accessibilityAddTraits(on ? .isSelected : [])
+    }
+
+    private func beginNewTag() {
+        draftTag = ""
+        withAnimation(reduceMotion ? nil : .spring(response: 0.38, dampingFraction: 0.82)) { addingTag = true }
+        tagFocused = true
+    }
+
+    /// Your own tag joins the list, already picked, and the field folds back
+    /// into the +.
+    private func addTag() {
+        let tag = String(draftTag.trimmingCharacters(in: .whitespacesAndNewlines).prefix(24))
+        if !tag.isEmpty {
+            if !Self.tagIdeas.contains(tag), !store.customPlaceTags.contains(tag) {
+                store.customPlaceTags.append(tag)
+            }
+            if !draftTags.contains(tag) { draftTags.append(tag) }
+        }
+        draftTag = ""
+        tagFocused = false
+        withAnimation(reduceMotion ? nil : .spring(response: 0.38, dampingFraction: 0.82)) { addingTag = false }
     }
 
     // MARK: - Photos
@@ -430,7 +555,7 @@ struct MeetupDetailView: View {
                     .font(.kithRowDetail)
                     .foregroundStyle(secondary)
 
-                ReflectionField(text: $hangout.reflection, minHeight: 94, fill: KithTheme.suggestionCard(isDark), cornerRadius: 6)
+                ReflectionField(text: $hangout.reflection, minHeight: 94, fill: KithTheme.uiFill(isDark), cornerRadius: 6)
             }
         }
     }
@@ -529,10 +654,28 @@ struct MeetupDetailView: View {
 
     // MARK: - Actions
 
+    /// Opens the naming card on the name you gave the place, tags and all.
+    private func beginRenaming() {
+        draftName = hangout.placeName ?? ""
+        draftTags = hangout.placeTags
+        addingTag = false
+        naming = true
+        nameFocused = true
+    }
+
+    private func cancelNaming() {
+        nameFocused = false
+        tagFocused = false
+        addingTag = false
+        naming = false
+    }
+
     private func savePlace() {
         let name = draftName.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !name.isEmpty else { return }
+        if addingTag { addTag() }
         nameFocused = false
+        store.name(place: hangout.place, as: name, tags: draftTags)
         hangout.placeName = name
         hangout.placeTags = draftTags
         naming = false
@@ -641,8 +784,11 @@ struct FeelingChips: View {
                 } label: {
                     Text(feeling.rawValue)
                         .font(.kithCaptionStrong)
-                        .kithCapCentered(13, relativeTo: .footnote)
-                        .foregroundStyle(KithTheme.ink(isDark))
+                        .kithCapCentered(15, relativeTo: .footnote)
+                        // Quiet until it's picked: an unchosen feeling is an
+                        // option, not an answer. Picked, it goes back to ink so
+                        // it still reads on its colour.
+                        .foregroundStyle(on ? KithTheme.ink(isDark) : KithTheme.secondary(isDark))
                         .padding(.horizontal, 11.7)
                         .padding(.vertical, 7.8)
                         .background(on ? feeling.pillFill : KithTheme.canvas(isDark), in: Capsule())
@@ -729,9 +875,10 @@ struct KithTextArea: UIViewRepresentable {
     func makeCoordinator() -> Coordinator { Coordinator(text: $text) }
 
     /// Kith/Typography/Caption, scaled with Dynamic Type like the rest of the app.
+    /// The same size as the "Notes" label above it: 15, Subheadline.
     private static var font: UIFont {
-        let base = UIFont(name: KithType.Weight.w90.rawValue, size: 13) ?? .systemFont(ofSize: 13)
-        return UIFontMetrics(forTextStyle: .footnote).scaledFont(for: base)
+        let base = UIFont(name: KithType.Weight.w90.rawValue, size: 15) ?? .systemFont(ofSize: 15)
+        return UIFontMetrics(forTextStyle: .subheadline).scaledFont(for: base)
     }
 
     final class Coordinator: NSObject, UITextViewDelegate {

@@ -18,6 +18,8 @@ struct KithContact: Identifiable {
         case photo(Portrait)
         /// Initials on a colour plate, for people without a photo.
         case initials(String, background: Color, ink: Color)
+        /// A photo from the phone's own contact card.
+        case picture(UIImage)
     }
 
     let name: String
@@ -26,6 +28,20 @@ struct KithContact: Identifiable {
     var isOnKith = true
     /// The line you've written about them, under their name on their own page.
     var note: String?
+    /// Their number, for people from the phone's contacts.
+    var phone: String?
+
+    /// Someone from the comps comes out as the real person playing them
+    /// where Bloom reads the phone's contacts (see `Recast`); `recast: false`
+    /// keeps the name as given.
+    init(name: String, face: Face, isOnKith: Bool = true, note: String? = nil, phone: String? = nil, recast: Bool = true) {
+        let real = recast ? Recast.person(playing: name) : nil
+        self.name = real?.name ?? name
+        self.face = real?.face ?? face
+        self.isOnKith = isOnKith
+        self.note = note
+        self.phone = real?.phone ?? phone
+    }
 
     var id: String { name }
 
@@ -89,6 +105,9 @@ struct FriendsView: View {
     #else
     @State private var planning: KithContact?
     #endif
+    /// Contacts access was turned down, so there's no one to invite yet.
+    @State private var contactsOff = false
+    @Environment(\.openURL) private var openURL
     @State private var sharing = false
     @State private var sharePing = 0
     @State private var requestArrived = false
@@ -101,7 +120,7 @@ struct FriendsView: View {
     private var isDark: Bool { colorScheme == .dark }
     private var ink: Color { KithTheme.ink(isDark) }
     private var secondary: Color { KithTheme.secondary(isDark) }
-    private var card: Color { KithTheme.suggestionCard(isDark) }
+    private var card: Color { KithTheme.uiFill(isDark) }
 
     // Measured off the comp, an iPhone 16 frame (393 × 852), then scaled by the
     // screen's width so the proportions hold on every phone. Type is left to
@@ -201,6 +220,12 @@ struct FriendsView: View {
                     ))
                 }
 
+                if contactsOff && !isSearching {
+                    contactsCard
+                        .padding(.horizontal, gutter)
+                        .padding(.top, 18 * scale)
+                }
+
                 if !visibleSuggestions.isEmpty {
                     section("People You Might Know") {
                         LazyVStack(spacing: 10) {
@@ -231,6 +256,7 @@ struct FriendsView: View {
             // Clear the floating tab bar, so the last row isn't under its glass.
             .padding(.bottom, 96)
         }
+        .progressiveTopBlur()
         .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { screenWidth = $0 }
         .scrollDismissesKeyboard(.immediately)
         .sensoryFeedback(.success, trigger: accepted)
@@ -240,6 +266,22 @@ struct FriendsView: View {
         .animation(reduceMotion ? nil : .spring(response: 0.32, dampingFraction: 0.85), value: centeredSlot)
         .fullScreenCover(item: $planning) { _ in
             PlanFlowView(onBack: { planning = nil })
+        }
+        // On Celeste's Release build, the people to invite are the phone's
+        // own contacts rather than made-up ones.
+        .task {
+            guard DeviceContacts.enabled else { return }
+            // Never the made-up people to invite: the phone's own contacts if
+            // you've allowed them, otherwise just people already on Bloom.
+            let onBloom = FriendSuggestion.sample.filter(\.contact.isOnKith)
+            suggestions = onBloom
+            guard let people = await DeviceContacts.load() else {
+                contactsOff = true
+                return
+            }
+            contactsOff = false
+            let known = Set((onBloom.map(\.contact.name)) + circle.map(\.name) + requests.map(\.contact.name))
+            suggestions = onBloom + people.filter { !known.contains($0.name) }.map { FriendSuggestion(contact: $0) }
         }
         .task {
             guard !requestArrived else { return }
@@ -263,6 +305,36 @@ struct FriendsView: View {
             FriendRecapView(contact: friend, onBack: { overview = nil })
                 .environment(store)
         }
+    }
+
+    /// Shown when Contacts is off: iOS only asks once, so the way back is
+    /// Settings.
+    private var contactsCard: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            VStack(alignment: .leading, spacing: 4) {
+                Text("Find People You Know")
+                    .font(.kithCardTitle)
+                    .foregroundStyle(ink)
+                Text("Turn on Contacts for Bloom to invite people from your phone. They stay on this phone.")
+                    .font(.kithCaption)
+                    .foregroundStyle(secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            Button {
+                if let url = URL(string: UIApplication.openSettingsURLString) { openURL(url) }
+            } label: {
+                Text("Open Settings")
+                    .font(.kithBody)
+                    .kithCapCentered(17, relativeTo: .body)
+                    .foregroundStyle(KithTheme.canvas(isDark))
+                    .padding(.vertical, 4)
+                    .frame(maxWidth: .infinity, minHeight: 36)
+                    .background(ink, in: Capsule())
+            }
+            .buttonStyle(PressableButtonStyle())
+        }
+        .padding(16)
+        .background(card, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
     }
 
     // MARK: - Header
@@ -400,13 +472,12 @@ struct FriendsView: View {
             }
         } label: {
             VStack(spacing: nameGap) {
-                ContactAvatar(contact: friend, diameter: portraitSize, initialsFont: .kithDisplay)
+                ContactAvatar(contact: friend, diameter: portraitSize)
 
                 Text(friend.firstName)
                     .font(isCentered ? .kithBodyStrong : .kithSecondary)
                     .foregroundStyle(isCentered ? ink : secondary)
                     .lineLimit(1)
-                    .minimumScaleFactor(0.8)
                     // Names fade out past the first friend either side, as in the comp.
                     .visualEffect { content, proxy in
                         let along = abs(Self.distanceFromMiddle(proxy, screenWidth: width))
@@ -502,11 +573,11 @@ struct FriendsView: View {
     }
 
     /// Says what it does: people on Bloom get a friend request they have to
-    /// accept, and people who aren't get an invite over Messages. Once sent it
-    /// reads "Requested" or "Invited"; tapping a request again withdraws it.
+    /// accept, and people who aren't get an invite over Messages. Once it's
+    /// gone out the plus becomes a greyed clock — it's with them now; tapping
+    /// a request again withdraws it.
     private func requestButton(for contact: KithContact) -> some View {
         let sent = requested.contains(contact.id)
-        let title = contact.isOnKith ? (sent ? "Requested" : "Request") : (sent ? "Invited" : "Invite")
 
         return Button {
             if sent {
@@ -523,14 +594,14 @@ struct FriendsView: View {
         } label: {
             Group {
                 if sent {
-                    Text("Pending")
-                        .font(.kithCaption)
-                        .kithCapCentered(13, relativeTo: .footnote)
-                        .foregroundStyle(KithTheme.secondaryOnFill(isDark))
-                        .lineLimit(1)
-                        .padding(.horizontal, 12)
-                        .frame(height: 34)
-                        .overlay(Capsule().strokeBorder(secondary, lineWidth: 1))
+                    // The same 35pt footprint as the plus it replaces, so the
+                    // row doesn't shift under your finger as it changes.
+                    Image(systemName: "clock")
+                        .font(.system(size: 18, weight: .semibold))
+                        .foregroundStyle(secondary)
+                        .frame(width: 35, height: 35)
+                        .background(KithTheme.uiFill(isDark), in: Circle())
+                        .overlay(Circle().strokeBorder(secondary.opacity(0.35), lineWidth: 1))
                 } else {
                     Image("AddFriendIcon")
                         .resizable()
@@ -559,13 +630,13 @@ struct FriendsView: View {
         // The comp's name and subtitle sit 16.5pt apart, baseline to baseline.
         VStack(alignment: .leading, spacing: 4.5) {
             Text(contact.name)
-                .font(.kithBodyStrong)
+                .font(.kithCardTitle)
                 .foregroundStyle(ink)
                 .lineLimit(1)
 
             if let connection {
                 connectionText(connection)
-                    .font(.kithBody)
+                    .font(.kithSecondary)
                     .foregroundStyle(secondary)
                     .lineLimit(1)
             }
@@ -575,7 +646,8 @@ struct FriendsView: View {
     private func connectionText(_ connection: Connection) -> Text {
         switch connection {
         case let .friendsWith(name, andOthers):
-            let mutual = Text(name).font(.kithCaptionHeavy)
+            // The same size as the line around it, just heavier.
+            let mutual = Text(name).font(.kithCardTitle)
             return andOthers
                 ? Text("Friends with \(mutual) and others")
                 : Text("Friends with \(mutual)")
@@ -635,7 +707,6 @@ struct FriendsView: View {
 struct ContactAvatar: View {
     let contact: KithContact
     let diameter: CGFloat
-    var initialsFont: Font = .kithInitialsSmall
     /// The badge's outline matches whatever the avatar sits on.
     var badgeRing: Color = .clear
     /// The Bloom mark on people already here, as onboarding's friend list
@@ -647,33 +718,36 @@ struct ContactAvatar: View {
             .frame(width: diameter, height: diameter)
             .clipShape(Circle())
             .overlay(alignment: .bottomTrailing) {
-                // Badges are 30% of the photo, the glyph well inside its circle
-                // (about 45% of it), as iOS draws its Messages badge.
-                let badge = diameter * 0.3
+                // The comp's badge (72:1113, 72:1114): the Messages icon itself
+                // in a white edge, 30% of the face and tucked into its corner,
+                // as onboarding's friend list draws it. Never under the 15pt
+                // onboarding uses, so small faces don't get a speck.
+                let badge = max(15, diameter * 0.3)
                 if !contact.isOnKith {
-                    Image("MessageBubbleIcon")
-                        .renderingMode(.template)
+                    Image("MessagesBadge")
                         .resizable()
-                        .scaledToFit()
-                        .frame(width: badge * 0.45, height: badge * 0.45)
-                        .foregroundStyle(.white)
                         .frame(width: badge, height: badge)
-                        .background(KithTheme.messagesGreen, in: Circle())
-                        .overlay(Circle().strokeBorder(badgeRing, lineWidth: 1.5))
+                        .clipShape(Circle())
+                        .overlay(Circle().strokeBorder(.white, lineWidth: 1))
                 } else if showsBloomBadge {
                     Image("BloomMark")
                         .renderingMode(.template)
                         .resizable()
                         .scaledToFit()
-                        .frame(width: badge * 0.5)
+                        .frame(width: badge * 0.6)
                         .foregroundStyle(KithTheme.canvas(false))
                         .frame(width: badge, height: badge)
                         .background(KithTheme.ink(false), in: Circle())
-                        .overlay(Circle().strokeBorder(badgeRing, lineWidth: 1.5))
+                        .overlay(Circle().strokeBorder(badgeRing, lineWidth: 1))
                 }
             }
             .accessibilityHidden(true)
     }
+
+    /// Initials fill the circle the way Contacts draws them, so a big face
+    /// on a friend's page doesn't hold two tiny letters. Never under 12pt.
+    private var initialsSize: CGFloat { max(15, diameter * 0.38) }
+    private var initialsFont: Font { KithType.font(.w130, initialsSize, .title3) }
 
     @ViewBuilder
     private var face: some View {
@@ -690,17 +764,22 @@ struct ContactAvatar: View {
             // A photo that isn't in the app yet: their initials on their colour.
             Text(String(contact.name.split(separator: " ").compactMap(\.first).prefix(2)))
                 .font(initialsFont)
-                .kithCapCentered(diameter * 0.26, relativeTo: .title3)
+                .kithCapCentered(initialsSize, relativeTo: .title3)
                 .foregroundStyle(KithTheme.ink(false))
                 .frame(width: diameter, height: diameter)
                 .background(contact.blob.color)
         case let .initials(letters, background, ink):
             Text(letters)
                 .font(initialsFont)
-                .kithCapCentered(diameter * 0.26, relativeTo: .title3)
+                .kithCapCentered(initialsSize, relativeTo: .title3)
                 .foregroundStyle(ink)
                 .frame(width: diameter, height: diameter)
                 .background(background)
+        case let .picture(image):
+            Image(uiImage: image)
+                .resizable()
+                .scaledToFill()
+                .frame(width: diameter, height: diameter)
         }
     }
 }
@@ -726,7 +805,7 @@ extension KithContact {
     ]
     // Everyone else from the recaps is a friend too, after the comp's own
     // three. (Jadden and Michelle stay a suggestion and a request, as drawn.)
-    + ["Dev", "Theo", "Amara", "Nina", "Kenji", "Sofia", "Priya", "Sam"].compactMap { RecentHangout.recapFriends[$0] }
+    + ["Dev", "Theo", "Amara", "Nina", "Kenji", "Sofia", "Evan", "Sam"].compactMap { RecentHangout.recapFriends[$0] }
 }
 
 /// Stand-in people so the lists feel like a real contact book. They're
@@ -775,7 +854,7 @@ extension FriendRequest {
     static let sample = DemoCast.isJudge ? DemoCast.requests : [
         FriendRequest(
             contact: KithContact(name: "Michelle Xuan", face: .photo(Portrait(asset: "AvatarMichelle", height: 2))),
-            connection: .friendsWith("Ishan", andOthers: true),
+            connection: .friendsWith(Recast.text("Ishan"), andOthers: true),
             received: .now.addingTimeInterval(-60)
         )
     ]
@@ -787,13 +866,13 @@ extension FriendSuggestion {
     private static let slate = Color(red: 0.580, green: 0.580, blue: 0.580)  // #949494
     private static let nearBlack = Color(red: 0.067, green: 0.067, blue: 0.067) // #111111
 
-    /// The judge's build suggests no one: it has only its two friends.
-    static let sample = DemoCast.isJudge ? [] : comps
+    /// The judge's build has only its two friends, but people to invite.
+    static let sample = DemoCast.isJudge ? DemoCast.invitees : comps
 
     private static let comps = [
         FriendSuggestion(
             contact: KithContact(name: "Jadden Picardal", face: .photo(Portrait(asset: "AvatarJadden"))),
-            connection: .friendsWith("Ishan")
+            connection: .friendsWith(Recast.text("Ishan"))
         ),
         FriendSuggestion(
             contact: KithContact(name: "Alicia Zhou", face: .initials("AZ", background: violet, ink: KithTheme.canvas(false)), isOnKith: false)
@@ -822,8 +901,9 @@ extension FriendSuggestion {
     /// The next `size` suggestions after the first `count`. The comp's six come
     /// first, then the made-up people, until they run out.
     static func page(after count: Int, size: Int = 20) -> [FriendSuggestion] {
-        // The judge's build has no one beyond its two friends to suggest.
-        guard !DemoCast.isJudge else { return [] }
+        // The judge's build has no one beyond its two friends to suggest, and
+        // a build that reads the phone's contacts suggests those instead.
+        guard !DemoCast.isJudge, !DeviceContacts.enabled else { return [] }
         let start = max(0, count - sample.count)
         let end = min(start + size, SamplePeople.count)
         guard start < end else { return [] }

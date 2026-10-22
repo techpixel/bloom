@@ -4,16 +4,51 @@ import SwiftUI
 
 // MARK: - Shared hangouts
 
+/// A place you named when Bloom noticed you kept going back, and the tags
+/// you gave it.
+struct SavedPlace: Identifiable {
+    var name: String
+    /// Where it is, as the hangouts there record it.
+    var place: String
+    var tags: [String]
+
+    var id: String { place }
+
+    /// The place without its town, as lines like "You saw them at Vienna
+    /// Cafe" name it.
+    var shortPlace: String {
+        String(place.split(separator: ",").first ?? Substring(place))
+    }
+}
+
 /// The hangouts Bloom has logged, shared by Home, Recaps and the entry pages, so
 /// a reflection saved in one place shows everywhere.
 @Observable
 final class HangoutStore {
-    var hangouts = RecentHangout.sample
+    var hangouts = RecentHangout.sample.filter { !$0.expired() }
     /// Times Bloom thinks you were with a friend and wants to check.
     var sightings = Sighting.sample
     /// The ones you said weren't a meeting. Kept so suggestions can learn
     /// that being near someone there doesn't mean you met.
     var notMet: [Sighting] = []
+    /// Places you've named, newest first. Home's ideas suggest them. Only
+    /// ever ones you named: somewhere you've merely been is location data,
+    /// not a saved place.
+    var savedPlaces: [SavedPlace] = []
+    /// The entry page on screen, if any: where the remote's offer to name
+    /// the place lands.
+    var openEntry: UUID?
+    /// Tags you've made for places, offered again whenever Bloom asks you
+    /// to name one, and kept between launches.
+    var customPlaceTags: [String] = UserDefaults.standard.stringArray(forKey: "places.customTags") ?? [] {
+        didSet { UserDefaults.standard.set(customPlaceTags, forKey: "places.customTags") }
+    }
+
+    /// A hangout nobody reflected on by the end of the next day is let go,
+    /// rather than nagging forever. Run when the app comes forward.
+    func dropExpired(now: Date = .now) {
+        hangouts.removeAll { $0.expired(now: now) }
+    }
 
     /// Yes: it becomes a hangout, newest of all, so Recent asks how it felt.
     func confirm(_ sighting: Sighting) {
@@ -21,10 +56,132 @@ final class HangoutStore {
         hangouts.insert(sighting.hangout, at: 0)
     }
 
+    /// Naming a place renames it everywhere Bloom mentions it: every hangout
+    /// there, anything waiting to be confirmed there, and Home's lines about
+    /// it. Naming it again replaces what you called it before.
+    func name(place: String, as name: String, tags: [String]) {
+        let earlier = savedPlaces.first { $0.place == place || $0.name == place }
+        let saved = SavedPlace(name: name, place: earlier?.place ?? place, tags: tags)
+        savedPlaces.removeAll { $0.place == saved.place }
+        savedPlaces.insert(saved, at: 0)
+
+        // The full place before the short one, or "Celery Bog, West
+        // Lafayette" would come out as "natureee, West Lafayette".
+        let old = [saved.place, saved.shortPlace, earlier?.name].compactMap { $0 }.filter { $0 != name }
+        func renamed(_ text: String) -> String {
+            old.reduce(text) { $0.replacingOccurrences(of: $1, with: name) }
+        }
+        for index in hangouts.indices {
+            hangouts[index].title = renamed(hangouts[index].title)
+            hangouts[index].detail = renamed(hangouts[index].detail)
+            hangouts[index].place = renamed(hangouts[index].place)
+            if hangouts[index].place == name {
+                hangouts[index].placeName = name
+                hangouts[index].placeTags = tags
+            }
+        }
+        for index in sightings.indices {
+            sightings[index].place = renamed(sightings[index].place)
+        }
+    }
+
+    /// A line as Bloom would say it now, with every place you've named
+    /// called by its name. For anything that arrives after the naming.
+    func called(_ text: String) -> String {
+        savedPlaces.reduce(text) { line, saved in
+            line.replacingOccurrences(of: saved.place, with: saved.name)
+                .replacingOccurrences(of: saved.shortPlace, with: saved.name)
+        }
+    }
+
     /// No: it's set aside and remembered rather than logged.
     func dismiss(_ sighting: Sighting) {
         sightings.removeAll { $0.id == sighting.id }
         notMet.append(sighting)
+    }
+
+    // MARK: Demo remote
+
+    /// Applies a command from the demo remote: nil if it worked, otherwise
+    /// what went wrong.
+    func apply(remote request: [String: Any]) -> String? {
+        let kind = request["kind"] as? String
+        if kind == "reset" {
+            hangouts = RecentHangout.sample.filter { !$0.expired() }
+            sightings = Sighting.sample
+            notMet = []
+            savedPlaces = []
+            return nil
+        }
+        // "You’ve been here 3 times… Name this new location?" on the open
+        // entry, as if Bloom had just noticed you keep coming back.
+        if kind == "name" {
+            guard let id = openEntry, let index = hangouts.firstIndex(where: { $0.id == id }) else {
+                return "Open a hangout on the phone first."
+            }
+            hangouts[index].visitsThisMonth = max(3, request["visits"] as? Int ?? 3)
+            hangouts[index].placeName = nil
+            hangouts[index].placeTags = []
+            hangouts[index].namingDismissed = false
+            return nil
+        }
+        let name = request["friend"] as? String ?? ""
+        guard let contact = friend(named: name) else { return "No friend called “\(name)”." }
+        let now = Date.now.formatted(.dateTime.hour(.defaultDigits(amPM: .abbreviated)))
+        let place = request["place"] as? String
+
+        switch kind {
+        case "sighting":
+            sightings.insert(Sighting(
+                contact: contact,
+                place: called(place ?? "Vienna Cafe, Lafayette"),
+                when: request["when"] as? String ?? "Just now",
+                startTime: now
+            ), at: 0)
+        case "reflect":
+            let activity = request["activity"] as? String ?? "Coffee"
+            let spot = place ?? "Vienna Cafe"
+            hangouts.insert(RecentHangout(
+                contact: contact,
+                title: "\(activity) with \(contact.firstName)",
+                detail: called("Today · \(request["length"] as? String ?? "1 hour") · \(spot)"),
+                startTime: now,
+                place: called(spot.contains(",") ? spot : "\(spot), Lafayette"),
+                photos: RecentHangout.photos(at: spot, seed: contact.name.count)
+            ), at: 0)
+        default:
+            return "Unknown command."
+        }
+        return nil
+    }
+
+    /// Someone you know, by full or first name, case aside.
+    /// Everyone the remote can name, your circle first.
+    var remoteFriends: [String] {
+        var seen: Set<String> = []
+        return (KithContact.circleSample + hangouts.map(\.contact) + sightings.map(\.contact))
+            .map(\.name)
+            .filter { seen.insert($0).inserted }
+    }
+
+    private func friend(named name: String) -> KithContact? {
+        // The remote may still use a comp's name for the real person playing it.
+        let given = name.trimmingCharacters(in: .whitespaces)
+        let query = (Recast.person(playing: given)?.name ?? Recast.text(given)).lowercased()
+        guard !query.isEmpty else { return nil }
+        let known = hangouts.map(\.contact) + sightings.map(\.contact) + KithContact.circleSample
+        return known.first { $0.name.lowercased() == query }
+            ?? known.first { $0.firstName.lowercased() == query }
+    }
+}
+
+extension RecentHangout {
+    /// Still unanswered after the day following it.
+    func expired(now: Date = .now) -> Bool {
+        guard feelings.isEmpty else { return false }
+        let calendar = Calendar.current
+        let dayAfter = calendar.date(byAdding: .day, value: 2, to: calendar.startOfDay(for: date)) ?? date
+        return now >= dayAfter
     }
 }
 
@@ -169,6 +326,7 @@ struct RecapsView: View {
                     }
                 }
             }
+            .progressiveTopBlur()
             .coordinateSpace(name: "recapScroll")
         }
         .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { screenWidth = $0 }
@@ -319,7 +477,7 @@ struct RecapsView: View {
                 .contentTransition(.numericText(value: Double(times)))
                 // Wider than a small bubble is fine; wrapping isn't.
                 .fixedSize()
-                .kithCapCentered(13, relativeTo: .footnote)
+                .kithCapCentered(15, relativeTo: .footnote)
                 .foregroundStyle(KithTheme.canvas(isDark))
                 .padding(.horizontal, 9)
                 .padding(.vertical, 3)
@@ -490,6 +648,7 @@ struct FriendRecapView: View {
                 .padding(.horizontal, 22)
                 .padding(.bottom, 40)
             }
+            .progressiveTopBlur()
 
         }
         .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { screenWidth = $0 }
@@ -571,10 +730,10 @@ struct FriendRecapView: View {
         }
     }
 
-    /// "Studying with Manitej" reads "Studying at 9 AM" on Manitej's own page.
+    /// "Eleventh House with Manitej" reads "Eleventh House at 9 AM" on
+    /// Manitej's own page.
     private static func shortTitle(_ hangout: RecentHangout) -> String {
-        let activity = hangout.title.components(separatedBy: " with ").first ?? hangout.title
-        return "\(activity) at \(hangout.startTime)"
+        "\(hangout.spot) at \(hangout.startTime)"
     }
 
     // MARK: Photos
@@ -616,7 +775,7 @@ struct FriendRecapView: View {
     private func addPhotoTile(side: CGFloat) -> some View {
         Button { addingPhoto = true } label: {
             RoundedRectangle(cornerRadius: 12, style: .continuous)
-                .fill(KithTheme.suggestionCard(isDark))
+                .fill(KithTheme.uiFill(isDark))
                 .frame(width: side, height: side)
                 .overlay {
                     Text("+")
@@ -697,10 +856,10 @@ struct HangoutRow: View {
                     .offset(x: -2)
 
                     VStack(alignment: .leading, spacing: 5) {
-                        Text(title ?? hangout.title)
+                        Text(title ?? hangout.heading)
                             .font(.kithCaptionStrong)
                             .foregroundStyle(KithTheme.ink(isDark))
-                        Text(hangout.detail)
+                        Text(hangout.subheading)
                             .font(.kithRowDetail)
                             .foregroundStyle(KithTheme.secondary(isDark))
                             .lineSpacing(3)
@@ -743,7 +902,7 @@ struct FeelingTag: View {
     var body: some View {
         Text(title)
             .font(large ? .kithCaptionStrong : .kithFineStrong)
-            .kithCapCentered(large ? 13 : 12, relativeTo: large ? .footnote : .caption)
+            .kithCapCentered(15, relativeTo: large ? .footnote : .caption)
             .foregroundStyle(text ?? KithTheme.ink(false))
             .lineLimit(1)
             // Never squeezed into "Energiz…" by a tight row; the row wraps instead.
@@ -788,7 +947,7 @@ extension RecentHangout {
         "Nina": KithContact(name: "Nina Alvarez", face: .photo(Portrait(asset: "RecapNina"))),
         "Kenji": KithContact(name: "Kenji Watanabe", face: .photo(Portrait(asset: "RecapKenji"))),
         "Sofia": KithContact(name: "Sofia Marchetti", face: .photo(Portrait(asset: "RecapSofia"))),
-        "Priya": KithContact(name: "Priya Raghunathan", face: .photo(Portrait(asset: "RecapPriya"))),
+        "Evan": KithContact(name: "Evan Raghunathan", face: .photo(Portrait(asset: "RecapPriya"))),
         "Sam": KithContact(name: "Sam Reyes", face: .photo(Portrait(asset: "RecapSam")))
     ]
 }
@@ -820,7 +979,10 @@ private extension RecapsView {
         let people = listed(friend).map { bubble in
             var bubble = bubble
             let hasPhoto: Bool
-            if case .photo = bubble.contact.face { hasPhoto = true } else { hasPhoto = DemoCast.isJudge }
+            switch bubble.contact.face {
+            case .photo, .picture: hasPhoto = true
+            case .initials: hasPhoto = DemoCast.isJudge
+            }
             if (bubble.times[.month] ?? 0) < 3 || !hasPhoto {
                 bubble.spots[.month] = nil
                 bubble.times[.month] = nil
@@ -875,7 +1037,7 @@ private extension RecapsView {
             RecapBubble(contact: friend("Nina"), spots: [.month: spot(290.5, 467.5, 99)], times: [.month: 7], tilt: -2),
             RecapBubble(contact: friend("Kenji"), spots: [.month: spot(70, 442, 84)], times: [.month: 5], tilt: 3),
             RecapBubble(contact: friend("Sofia"), spots: [.month: spot(-3.5, 385.5, 53)], times: [.month: 2], tilt: -3),
-            RecapBubble(contact: friend("Priya"), spots: [.month: spot(-12, 242, 84)], times: [.month: 5], tilt: 2),
+            RecapBubble(contact: friend("Evan"), spots: [.month: spot(-12, 242, 84)], times: [.month: 5], tilt: 2),
             RecapBubble(contact: friend("Sam"), spots: [.month: spot(399.5, 428.5, 79)], times: [.month: 4], tilt: -4)
         ] + ringBubbles(spot)
     }
